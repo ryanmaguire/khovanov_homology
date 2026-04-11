@@ -53,12 +53,12 @@ bool isnull(Mat* m){
   return true;
 }
 //basic swapping
-void swaprows(Mat*m, int row1, int row2){
+static void swaprows(Mat*m, int row1, int row2){
   int* temp = m->matrix[row1];
   m->matrix[row1] = m->matrix[row2];
   m->matrix[row2] = temp;
 }
-void swapcols(Mat* m, int col1, int col2){
+static void swapcols(Mat* m, int col1, int col2){
   for (int i=0;i<m->rows;i++){
     int temp =m->matrix[i][col1];
     m->matrix[i][col1] = m->matrix[i][col2];
@@ -95,22 +95,22 @@ void SwapCols(Mat* m, int col1, int col2){
     m->source[col2] = temp;
   }
 }
-void addRow2(Mat* m, int a, int b, int n){
+static void addRow2(Mat* m, int a, int b, int n){
   for (int i=0;i<m->cols;i++){
     m->matrix[a][i] += (m->matrix[b][i]*n);
   }
 }
-void addColumn2(Mat* m, int a, int b, int n) { 
+static void addColumn2(Mat* m, int a, int b, int n) { 
   for (int i=0;i<m->rows;i++) {
     m->matrix[i][a] += (m->matrix[i][b]*n);
   }
 }
-void multRow2(Mat* m, int a, int n) { 
+static void multRow2(Mat* m, int a, int n) { 
   for (int i=0;i<m->cols;i++) {
       m->matrix[a][i]*=n;
   }
 }
-void multColumn2(Mat* m, int a, int n) { 
+static void multColumn2(Mat* m, int a, int n) { 
   for (int i=0;i<m->rows;i++) {
       m->matrix[i][a]*=n;
   }
@@ -145,4 +145,87 @@ int columnNonZeroes(Mat* m, int col){
     }
   }
   return count;
+}
+int zeroRowsToEnd(Mat* m){
+  int nzrows = m->rows;
+  for (int i=0;i<nzrows;i++){
+    while (rowNonZeroes(m, i) == 0 && i<nzrows){
+      swaprows(m, i, nzrows-1);
+      nzrows--;
+    }
+  }return nzrows;
+}
+int zeroColumnsToEnd(Mat* m){
+  int nzcols = m->cols;
+  for (int i=0;i<nzcols;i++){
+    while (columnNonZeroes(m, i) == 0 && i<nzcols){
+      swapcols(m, i, nzcols-1);
+      nzcols--;
+    }
+  }return nzcols;
+}
+void toSF(Mat* m){
+  for (int row=0,col=0; row<m->rows && col<m->cols; row++, col++) {
+        while (row<m->rows && rowNonZeroes(m, row) == 0) row++;
+        while (col<m->cols && columnNonZeroes(m, col) == 0) col++;
+        if (row >= m->rows || col >= m->cols) break;
+        if (row>col) {
+            SwapRows(m, row, col);
+            row = col;
+        }else if (col>row) {
+            SwapCols(m, row, col);
+            col = row;
+        }
+        while (rowNonZeroes(m, row) != 1 || columnNonZeroes(m, col)!= 1 || m->matrix[row][col] <= 0) {
+            for (int j=row; j<m->rows; j++) {
+                if (m->matrix[j][col] < 0) {
+                    multRow(m, j, -1);
+                }
+            }
+            //euclidean algorithm on the column
+            while (columnNonZeroes(m,col) != 1 || m->matrix[row][col]==0) {
+                int min = -1;
+                int idxmin = -1;
+                for (int j=row; j<m->rows; j++) {
+                    if ((m->matrix[j][col] < min || min == -1) && m->matrix[j][col] > 0) {
+                        min = m->matrix[j][col];
+                        idxmin = j;
+                    }
+                }
+                if (idxmin != row) {
+                    SwapRows(m,row, idxmin);
+                }
+                for (int j=row+1; j<m->rows; j++) {
+                    if (m->matrix[j][col] != 0) {
+                        addRow(m, j, row, -(m->matrix[j][col] / min));
+                    }
+                }
+            }
+            for (int j=col+1; j<m->cols; j++) {
+                if (m->matrix[row][j] < 0) {
+                    multColumn(m, j, -1);
+                }
+            }
+            while (rowNonZeroes(m, row) != 1 || m->matrix[row][col] == 0) {
+                int min = -1;
+                int idxmin = -1;
+                for (int j=col; j<m->cols; j++) {
+                    if ((m->matrix[row][j]<min || min==-1) && m->matrix[row][j] > 0) {
+                        min = m->matrix[row][j];
+                        idxmin = j;
+                    }
+                }
+                if (idxmin != col) {
+                    SwapCols(m, col, idxmin);
+                }
+                for (int j=col+1; j<m->cols; j++) {
+                    if (m->matrix[row][j] != 0) {
+                        addColumn(m, j, col, -(m->matrix[row][j]/ min));
+                    }
+                }
+            }
+        }
+    }
+    zeroRowsToEnd(m);
+    zeroColumnsToEnd(m);
 }
