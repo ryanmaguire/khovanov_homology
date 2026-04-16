@@ -23,48 +23,38 @@ typedef struct AbstractLinearCombo AbstractLinearCombo;
 struct AbstractLinearCombo {
     MorphismCollection* (*terms)(AbstractLinearCombo* self);
     Ring* (*getCoefficient)(AbstractLinearCombo* self, Morphism* term);
-
     char* (*ringToString)(Ring* r);
     char* (*morphismToString)(Morphism* m);
 };
-/*
- * Purpose: Retrieves the first morphism term from the linear combination.
- * Arguments: 
- *  >self
- * Output: Morphism*
- */
+//Purpose: Retrieves the first morphism term from the linear combination.
+//Arguments: 
+// >self
+//Output: Morphism*
 Morphism* AbstractLinearCombo_firstTerm(AbstractLinearCombo* self);
 
-/*
- * Purpose: Retrieves the coefficient of the first morphism term.
- * Arguments: 
- *  >self
- * Output: Ring*
- */
+
+//Purpose: Retrieves the coefficient of the first morphism term.
+//Arguments: 
+// >self
+//Output: Ring*
 Ring* AbstractLinearCombo_firstCoefficient(AbstractLinearCombo* self);
 
-/*
- * Purpose: Checks if the linear combination has no terms.
- * Arguments: 
- *  >self
- * Output: bool
- */
+//Purpose: Checks if the linear combination has no terms.
+//Arguments: 
+// >self
+//Output: bool
 bool AbstractLinearCombo_isZero(AbstractLinearCombo* self);
 
-/*
- * Purpose: Counts the number of terms in the linear combination.
- * Arguments: 
- *  >self
- * Output: int
- */
+//Purpose: Counts the number of terms in the linear combination.
+//Arguments: 
+// >self
+//Output: int
 int AbstractLinearCombo_numberOfTerms(AbstractLinearCombo* self);
 
-/*
- * Purpose: Generates a string representation of the linear combination.
- * Arguments: 
- *  >self
- * Output: char*
- */
+//Purpose: Generates a string representation of the linear combination.
+//Arguments: 
+// >self
+//Output: char*
 char* AbstractLinearCombo_toString(AbstractLinearCombo* self);
 
 #endif 

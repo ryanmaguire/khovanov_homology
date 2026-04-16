@@ -30,17 +30,13 @@ static void sb_append(StringBuilder* sb, const char* text) {
 }
 Morphism* AbstractLinearCombo_firstTerm(AbstractLinearCombo* self) {
     if (!self || !self->terms) return NULL;
-    
     MorphismCollection* terms = self->terms(self);
     if (!terms || !terms->iterator) return NULL;
-
     MorphismIterator* it = terms->iterator(terms);
     Morphism* first = NULL;
-    
     if (it && it->hasNext(it)) {
         first = it->next(it);
     }
-    
     if (it && it->free) it->free(it); 
     return first;
 }
