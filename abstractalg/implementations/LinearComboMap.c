@@ -8,6 +8,7 @@
 //output description: no return value
 //method: allocates or sets up the internal coefficients map and assigns function pointers
 void LinearComboMap_init(LinearComboMap* self) {
+    //ensure validity
     if (self) {
         self->coefficients = NULL; 
     }
@@ -23,13 +24,15 @@ LinearComboMap* LinearComboMap_addTerm(LinearComboMap* self, Morphism* cc, int n
     if (!self || !self->coefficients) return self;
 
     MorphismIntMap* map = self->coefficients;
-
+    //preexisting or not
     if (map->containsKey(map, cc)) {
         int newCoefficient = map->get(map, cc) + num;
+        //remove if cancels out
         if (newCoefficient== 0) {
             map->remove(map, cc);
             if (self->compact) return self->compact(self);
-        } else {
+        } else{
+            //update with new coefficient
             map->put(map, cc, newCoefficient);
         }
     } else {
@@ -47,6 +50,7 @@ LinearComboMap* LinearComboMap_addTerm(LinearComboMap* self, Morphism* cc, int n
 //output description: pointer to the compacted LinearComboMap after addition
 //method: we iterate through the terms of other and call addTerm for each one
 LinearComboMap* LinearComboMap_addCombo(LinearComboMap* self, LinearComboMap* other) {
+    //validity check
     if (!self || !other || !other->coefficients || !other->coefficients->keys) return self;
     MorphismCollection* terms = other->coefficients->keys(other->coefficients);
     if (!terms) return self;
@@ -55,8 +59,10 @@ LinearComboMap* LinearComboMap_addCombo(LinearComboMap* self, LinearComboMap* ot
         while (it && it->hasNext && it->hasNext(it)) {
             Morphism* cc = it->next(it);
             int coef = other->coefficients->get(other->coefficients, cc);
+            //add into linear combination
             LinearComboMap_addTerm(self, cc, coef);
         }
+        //clean up
         if (it && it->free) it->free(it);
     }
     free(terms);
@@ -76,6 +82,7 @@ LinearComboMap* LinearComboMap_multiply(LinearComboMap* self, int num) {
     MorphismIntMap* map = self->coefficients;
 
     if (num == 0) {
+        //multiplying by zero clears
         if (map->clear) map->clear(map);
         if (self->flexibleZeroLinearCombo) return self->flexibleZeroLinearCombo();
         return self; 
@@ -85,6 +92,7 @@ LinearComboMap* LinearComboMap_multiply(LinearComboMap* self, int num) {
         if (!terms) return self;
         if (terms->iterator) {
             MorphismIterator* it = terms->iterator(terms);
+            //loop and scale
             while (it && it->hasNext && it->hasNext(it)) {
                 Morphism* cc = it->next(it);
                 int currentCoef = map->get(map, cc);
@@ -131,6 +139,7 @@ LinearComboMap* LinearComboMap_compose(LinearComboMap* self, LinearComboMap* oth
                 Morphism* occ = otherIt->next(otherIt);
                 int otherCoef = other->coefficients->get(other->coefficients, occ);    
                 Morphism* composedMor = self->composeMorphisms(cc, occ);
+                //crossmultiply
                 int composedCoef = myCoef * otherCoef;
                 LinearComboMap_addTerm(ret, composedMor, composedCoef);
             }
