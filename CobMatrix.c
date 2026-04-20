@@ -97,11 +97,11 @@ void CobMatrix_addEntry(CobMatrix *m, int row_idx, int col_idx, LCCC *t) {
         } else {
           row->head = current->next;
         }
-        // LCCC_free(current->value);
-        // LCCC_free(sum);
+        LCCC_free(current->value);
+        LCCC_free(sum);
         free(current);
       } else {
-        // LCCC_free(current->value);
+        LCCC_free(current->value);
         current->value = sum;
       }
       return;
@@ -166,7 +166,7 @@ void CobMatrix_multiply(CobMatrix *m, RingElement *n) {
     while (current != NULL) {
       LCCC *mult = LCCC_multiply(current->value, n);
       // Replace value
-      // LCCC_free(current->value);
+      LCCC_free(current->value);
       current->value = mult;
       current = current->next;
     }
@@ -270,12 +270,28 @@ CobMatrix *CobMatrix_extractColumn(CobMatrix *m, int column_idx) {
     }
   }
 
-  // Shift the source arrays to remove the extracted column
-  for (int i = column_idx + 1; i < m->source->n; i++) {
-    m->source->numbers[i - 1] = m->source->numbers[i];
-    m->source->smoothings[i - 1] = m->source->smoothings[i];
+  // Create a new source column to avoid mutating shared arrays
+  SmoothingColumn *new_m_source =
+      (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
+  new_m_source->n = m->source->n - 1;
+  if (new_m_source->n > 0) {
+    new_m_source->numbers = (int *)malloc(sizeof(int) * new_m_source->n);
+    new_m_source->smoothings = (Cap **)malloc(sizeof(Cap *) * new_m_source->n);
+    for (int i = 0, j = 0; i < m->source->n; i++) {
+      if (i == column_idx)
+        continue;
+      new_m_source->numbers[j] = m->source->numbers[i];
+      new_m_source->smoothings[j] = m->source->smoothings[i];
+      j++;
+    }
+  } else {
+    new_m_source->numbers = NULL;
+    new_m_source->smoothings = NULL;
   }
-  m->source->n--;
+
+  // Note: we intentionally do not free the old m->source array
+  // because it may be shared if shared=true.
+  m->source = new_m_source;
 
   return res;
 }
@@ -304,12 +320,28 @@ CobMatrix *CobMatrix_extractRow(CobMatrix *m, int row_idx) {
   }
   m->entries[m->target->n - 1].head = NULL;
 
-  // Shift the target arrays to remove the extracted row
-  for (int i = row_idx + 1; i < m->target->n; i++) {
-    m->target->numbers[i - 1] = m->target->numbers[i];
-    m->target->smoothings[i - 1] = m->target->smoothings[i];
+  // Create a new target column to avoid mutating shared arrays
+  SmoothingColumn *new_m_target =
+      (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
+  new_m_target->n = m->target->n - 1;
+  if (new_m_target->n > 0) {
+    new_m_target->numbers = (int *)malloc(sizeof(int) * new_m_target->n);
+    new_m_target->smoothings = (Cap **)malloc(sizeof(Cap *) * new_m_target->n);
+    for (int i = 0, j = 0; i < m->target->n; i++) {
+      if (i == row_idx)
+        continue;
+      new_m_target->numbers[j] = m->target->numbers[i];
+      new_m_target->smoothings[j] = m->target->smoothings[i];
+      j++;
+    }
+  } else {
+    new_m_target->numbers = NULL;
+    new_m_target->smoothings = NULL;
   }
-  m->target->n--;
+
+  // Note: we intentionally do not free the old m->target array
+  // because it may be shared if shared=true.
+  m->target = new_m_target;
 
   return res;
 }
