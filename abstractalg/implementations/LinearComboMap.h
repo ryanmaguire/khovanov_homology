@@ -4,24 +4,22 @@
 #include "AbstractLinearCombo.h"
 #include <stdbool.h>
 
-typedef struct MorphismIntMap MorphismIntMap;
-
-struct MorphismIntMap {
-    void* state;
-    int (*get)(MorphismIntMap* self, Morphism* key);
-    void (*put)(MorphismIntMap* self, Morphism* key, int value);
-    void (*remove)(MorphismIntMap* self, Morphism* key);
-    bool (*containsKey)(MorphismIntMap* self, Morphism* key);
-    void (*clear)(MorphismIntMap* self);
-    MorphismCollection* (*keys)(MorphismIntMap* self);
-};
+typedef struct {
+    Morphism* morphism;
+    int coefficient;
+} Term;
 
 typedef struct LinearComboMap LinearComboMap;
 
 struct LinearComboMap {
     AbstractLinearCombo base;
-    MorphismIntMap* coefficients;
-    
+    Term* terms;
+    int size;
+    int capacity;
+    LinearComboMap* (*addTerm)(LinearComboMap* self, Morphism* cc, int num);
+    LinearComboMap* (*addCombo)(LinearComboMap* self, LinearComboMap* other);
+    LinearComboMap* (*multiply)(LinearComboMap* self, int num);
+    LinearComboMap* (*compose)(LinearComboMap* self, LinearComboMap* other);
     LinearComboMap* (*compact)(LinearComboMap* self);
     LinearComboMap* (*flexibleZeroLinearCombo)(void);
     Morphism* (*composeMorphisms)(Morphism* m1, Morphism* m2);
@@ -32,7 +30,7 @@ struct LinearComboMap {
 //argument descriptions: self is a pointer to the LinearComboMap struct to initialize
 //output: void
 //output description: no return value
-//method: sets coefficients to NULL, caller must inject a valid MorphismIntMap
+//method: initializes the internal array and assigns function pointers
 void LinearComboMap_init(LinearComboMap* self);
 
 //purpose: add a morphism term with an integer coefficient to the map
