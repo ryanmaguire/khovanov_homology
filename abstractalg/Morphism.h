@@ -24,6 +24,8 @@ struct Morphism {
     //Output: Morphism*
     //Output description: A new morphism representing the composition
     Morphism* (*compose)(Morphism* self, Morphism* other);
+
+    int (*compareTo)(struct Morphism* self, struct Morphism* other);
 };
 
 #endif

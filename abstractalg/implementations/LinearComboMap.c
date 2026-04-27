@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include "../Morphism.h"
 
 typedef struct {
     LinearComboMap* owner;
@@ -70,7 +71,11 @@ static MorphismCollection* LinearComboMap_terms(AbstractLinearCombo* self) {
     return col;
 }
 
-static int morphismPtrCompare(Morphism* a, Morphism* b) {
+static int morphismCompare(Morphism* a, Morphism* b) {
+    if (a == b) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
+    if (a->compareTo) return a->compareTo(a, b);
     uintptr_t ua = (uintptr_t)a;
     uintptr_t ub = (uintptr_t)b;
     if (ua < ub) return -1;
@@ -85,14 +90,14 @@ static int LinearComboMap_getCoefficient(AbstractLinearCombo* self, Morphism* te
     int hi = owner->size;
     while (lo < hi) {
         int mid = lo + (hi - lo) / 2;
-        int cmp = morphismPtrCompare(owner->terms[mid].morphism, term);
+        int cmp = morphismCompare(owner->terms[mid].morphism, term);
         if (cmp < 0) {
             lo = mid + 1;
         } else {
             hi = mid;
         }
     }
-    if (lo < owner->size && morphismPtrCompare(owner->terms[lo].morphism, term) == 0) {
+    if (lo < owner->size && morphismCompare(owner->terms[lo].morphism, term) == 0) {
         return owner->terms[lo].coefficient;
     }
     return 0;
@@ -155,7 +160,7 @@ LinearComboMap* LinearComboMap_addTerm(LinearComboMap* self, Morphism* cc, int n
     int hi = self->size;
     while (lo < hi) {
         int mid = lo + (hi - lo) / 2;
-        int cmp = morphismPtrCompare(self->terms[mid].morphism, cc);
+        int cmp = morphismCompare(self->terms[mid].morphism, cc);
         if (cmp < 0) {
             lo = mid + 1;
         } else {
@@ -163,7 +168,7 @@ LinearComboMap* LinearComboMap_addTerm(LinearComboMap* self, Morphism* cc, int n
         }
     }
 
-    if (lo < self->size && morphismPtrCompare(self->terms[lo].morphism, cc) == 0) {
+    if (lo < self->size && morphismCompare(self->terms[lo].morphism, cc) == 0) {
         int newCoefficient = self->terms[lo].coefficient + num;
         if (newCoefficient == 0) {
             memmove(&self->terms[lo], &self->terms[lo + 1], (size_t)(self->size - lo - 1) * sizeof(Term));
@@ -205,7 +210,7 @@ LinearComboMap* LinearComboMap_addCombo(LinearComboMap* self, LinearComboMap* ot
     int i = 0;
     int j = 0;
     while (i < self->size && j < other->size) {
-        int cmp = morphismPtrCompare(self->terms[i].morphism, other->terms[j].morphism);
+        int cmp = morphismCompare(self->terms[i].morphism, other->terms[j].morphism);
 
         if (cmp == 0) {
             int newCoef = self->terms[i].coefficient + other->terms[j].coefficient;
