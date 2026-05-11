@@ -3,6 +3,23 @@
 #include <stdio.h>
 #include <string.h>
 
+int pop_count(unsigned int n)
+{
+#if defined(__GNUC__) || defined(__clang__)
+    return __builtin_popcount(n);
+#elif defined(_MSC_VER)
+    return __popcnt(n);
+#else
+    // Portable fallback (Brian Kernighan algorithm)
+    int count = 0;
+    while (n != 0) {
+        n &= (n - 1);  
+        count++;
+    }
+    return count;
+#endif
+}
+
 // Helper: compute writhe from PD (standard sign rule)
 static int compute_writhe(int pd[][4], int m) {
     int w = 0;
