@@ -30,6 +30,28 @@ static int compute_writhe(int pd[][4], int m) {
     return w;
 }
 
+
+Knot* knot_from_pd(int pd[][4], int m) {
+    Knot* k = malloc(sizeof(Knot));
+    k->m = m;
+    k->pd = malloc(m * sizeof(int*));
+    for (int i = 0; i < m; i++) {
+        k->pd[i] = malloc(4 * sizeof(int));
+        for (int j = 0; j < 4; j++) k->pd[i][j] = pd[i][j];
+    }
+    k->writhe = compute_writhe(pd, m);
+    return k;
+}
+
+void knot_free(Knot* k) {
+    if (k) {
+        for (int i = 0; i < k->m; i++) free(k->pd[i]);
+        free(k->pd);
+        free(k);
+    }
+}
+
+
 static int count_loops_and_min_labels(int pd[][4], int m, int r, int* loop_min) {
     int next_edge[2 * m];          // 2m edges
     int visited[2 * m] = {0};
@@ -64,46 +86,6 @@ static int count_loops_and_min_labels(int pd[][4], int m, int r, int* loop_min) 
 }
 
 
-Knot* knot_from_pd(int pd[][4], int m) {
-    Knot* k = malloc(sizeof(Knot));
-    k->m = m;
-    k->pd = malloc(m * sizeof(int*));
-    for (int i = 0; i < m; i++) {
-        k->pd[i] = malloc(4 * sizeof(int));
-        for (int j = 0; j < 4; j++) k->pd[i][j] = pd[i][j];
-    }
-    k->writhe = compute_writhe(pd, m);
-    return k;
-}
-
-void knot_free(Knot* k) {
-    if (k) {
-        for (int i = 0; i < k->m; i++) free(k->pd[i]);
-        free(k->pd);
-        free(k);
-    }
-}
-
-// Paper 4.2.3: Loop enumeration for a resolution r (bitmask)
-static int count_loops_and_min_labels(int pd[][4], int m, int r, int* loop_min) {
-    // Simplified union-find style for circle count (correct for small knots)
-    // Full paper algorithm: follow edges, record min label per loop
-    int parent[2 * m];   // 2m edges
-    for (int i = 0; i < 2 * m; i++) parent[i] = i;
-
-    // Apply smoothing according to r
-    for (int k = 0; k < m; k++) {
-        int a = pd[k][0], b = pd[k][1], c = pd[k][2], d = pd[k][3];
-        if ((r & (1 << k)) == 0) { // 0-smoothing
-            // connect a-b and c-d
-        } else {                   // 1-smoothing
-            // connect a-d and b-c
-        }
-    }
-    // (Full loop following code omitted for brevity - uses paper's connectivity)
-    // Return number of loops and fill loop_min (for enhanced state)
-    return 0; // placeholder - real impl counts circles correctly
-}
 
 // Main computation: enumerate all 2^m resolutions, build differentials with Jordan-Wigner signs
 BivariatePoly* compute_khovanov_polynomial(Knot* knot) {
