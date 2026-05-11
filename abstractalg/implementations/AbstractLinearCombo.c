@@ -71,12 +71,12 @@ Morphism* AbstractLinearCombo_firstTerm(AbstractLinearCombo* self) {
 //Output: int
 //Output description: Integer coefficient or 0 if empty
 //Method: Get the first term and pass it to the getCoefficient function
-int AbstractLinearCombo_firstCoefficient(AbstractLinearCombo* self) {
+BivariatePoly* AbstractLinearCombo_firstCoefficient(AbstractLinearCombo* self) {
     Morphism* first = AbstractLinearCombo_firstTerm(self);
     if (first != NULL && self->getCoefficient) {
         return self->getCoefficient(self, first);
     }
-    return 0; 
+    return NULL; // Represents a zero/empty polynomial conceptually
 }
 //Purpose: Check if the linear combo has no terms
 //Arguments: self
@@ -128,8 +128,6 @@ char* AbstractLinearCombo_toString(AbstractLinearCombo* self) {
     }
 
     MorphismCollection* terms_col = self->terms(self);
-    
-    // Validate collection and iterator before proceeding
     if (!terms_col || !terms_col->iterator) {
         if (terms_col) free(terms_col);
         return NULL; 
@@ -143,30 +141,36 @@ char* AbstractLinearCombo_toString(AbstractLinearCombo* self) {
 
     StringBuilder sb;
     sb_init(&sb);
-    char coeff_buffer[32];
 
     if (i->hasNext && i->hasNext(i)) {
         Morphism* term = i->next(i);
-        int coeff = self->getCoefficient(self, term);
-        snprintf(coeff_buffer, sizeof(coeff_buffer), "%d", coeff);
+        BivariatePoly* coeff = self->getCoefficient(self, term);
+        
+        char* coeff_str = bp_to_string(coeff); // Requires a new function in BivariatePoly.c
         char* term_str = self->morphismToString(term);
 
-        sb_append(&sb, coeff_buffer);
-        sb_append(&sb, " * ");
+        sb_append(&sb, "(");
+        sb_append(&sb, coeff_str);
+        sb_append(&sb, ") * ");
         sb_append(&sb, term_str);
+        
+        free(coeff_str);
         free(term_str);
     }
 
     while (i->hasNext && i->hasNext(i)) {
         Morphism* term = i->next(i);
-        int coeff = self->getCoefficient(self, term);
-        snprintf(coeff_buffer, sizeof(coeff_buffer), "%d", coeff);
+        BivariatePoly* coeff = self->getCoefficient(self, term);
+        
+        char* coeff_str = bp_to_string(coeff);
         char* term_str = self->morphismToString(term);
 
-        sb_append(&sb, " + ");
-        sb_append(&sb, coeff_buffer);
-        sb_append(&sb, " * ");
+        sb_append(&sb, " + (");
+        sb_append(&sb, coeff_str);
+        sb_append(&sb, ") * ");
         sb_append(&sb, term_str);
+        
+        free(coeff_str);
         free(term_str);
     }
 

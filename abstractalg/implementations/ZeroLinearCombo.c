@@ -68,8 +68,19 @@ static int emptyCollection_size(MorphismCollection* self) {
     return 0;
 }
 
-int ZeroLinearCombo_firstCoefficient(ZeroLinearCombo* self) {
-    return 0;
+static BivariatePoly* ZeroLinearCombo_zeroPoly(void) {
+    static Monomial terms[1];
+    static BivariatePoly poly = {
+        .terms = terms,
+        .num_terms = 0,
+        .capacity = 1,
+    };
+    poly.num_terms = 0;
+    return &poly;
+}
+
+BivariatePoly* ZeroLinearCombo_firstCoefficient(ZeroLinearCombo* self) {
+    return ZeroLinearCombo_zeroPoly();
 }
 
 Morphism* ZeroLinearCombo_firstTerm(ZeroLinearCombo* self) {
@@ -106,8 +117,8 @@ ZeroLinearCombo* ZeroLinearCombo_addTerm(ZeroLinearCombo* self, Morphism* mor, i
     return NULL;
 }
 
-int ZeroLinearCombo_getCoefficient(ZeroLinearCombo* self, Morphism* term) {
-    return 0;
+BivariatePoly* ZeroLinearCombo_getCoefficient(ZeroLinearCombo* self, Morphism* term) {
+    return ZeroLinearCombo_zeroPoly();
 }
 
 MorphismCollection* ZeroLinearCombo_terms(ZeroLinearCombo* self) {

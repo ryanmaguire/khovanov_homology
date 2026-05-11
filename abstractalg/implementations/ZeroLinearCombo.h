@@ -14,7 +14,7 @@ struct ZeroLinearCombo {
 //arguments: self, a pointer to the ZeroLinearCombo instance
 //output: int, since we return 0
 //method: hardcoded to return 0
-int ZeroLinearCombo_firstCoefficient(ZeroLinearCombo* self);
+BivariatePoly* ZeroLinearCombo_firstCoefficient(ZeroLinearCombo* self);
 
 //purpose: return the first morphism term
 //arguments: self, a pointer to the ZeroLinearCombo instance
@@ -67,7 +67,7 @@ ZeroLinearCombo* ZeroLinearCombo_addTerm(ZeroLinearCombo* self, Morphism* mor, i
 //output: int
 //output description: always returns 0
 //method: since the combo is empty the coefficient for any term is 0
-int ZeroLinearCombo_getCoefficient(ZeroLinearCombo* self, Morphism* term);
+BivariatePoly* ZeroLinearCombo_getCoefficient(ZeroLinearCombo* self, Morphism* term);
 
 //purpose: retrieve the collection of terms
 //arguments: self

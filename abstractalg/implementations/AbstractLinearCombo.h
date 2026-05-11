@@ -3,7 +3,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
-
+#include "../../polynomial/polynomial/BivariatePoly.h"
 typedef struct Morphism Morphism;
 
 typedef struct MorphismIterator {
@@ -24,7 +24,10 @@ typedef struct AbstractLinearCombo AbstractLinearCombo;
 
 struct AbstractLinearCombo {
     MorphismCollection* (*terms)(AbstractLinearCombo* self);
-    int (*getCoefficient)(AbstractLinearCombo* self, Morphism* term);
+    
+    // CHANGED: Now returns a pointer to a BivariatePoly instead of an int
+    BivariatePoly* (*getCoefficient)(AbstractLinearCombo* self, Morphism* term);
+    
     char* (*morphismToString)(Morphism* m);
 };
 //Purpose: Retrieve the first morphism term
@@ -41,7 +44,7 @@ Morphism* AbstractLinearCombo_firstTerm(AbstractLinearCombo* self);
 //Output: int
 //Output description: Integer coefficient or 0 if empty
 //Method: Get the first term and pass it to the getCoefficient function
-int AbstractLinearCombo_firstCoefficient(AbstractLinearCombo* self);
+BivariatePoly* AbstractLinearCombo_firstCoefficient(AbstractLinearCombo* self);
 
 //Purpose: Check if the linear combo has no terms
 //Arguments: self

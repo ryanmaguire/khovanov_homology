@@ -21,5 +21,6 @@ BivariatePoly* bp_add(const BivariatePoly* p1, const BivariatePoly* p2);
 // multiply
 BivariatePoly* bp_multiply(const BivariatePoly* p1, const BivariatePoly* p2);
 void bp_print(const BivariatePoly* p);
+char* bp_to_string(const BivariatePoly* p);
 
 #endif

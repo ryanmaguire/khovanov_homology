@@ -83,8 +83,16 @@ static int morphismCompare(Morphism* a, Morphism* b) {
     return 0;
 }
 
-static int LinearComboMap_getCoefficient(AbstractLinearCombo* self, Morphism* term) {
-    if (!self || !term) return 0;
+static BivariatePoly* LinearComboMap_getCoefficient(AbstractLinearCombo* self, Morphism* term) {
+    static Monomial terms[1];
+    static BivariatePoly poly = {
+        .terms = terms,
+        .num_terms = 0,
+        .capacity = 1,
+    };
+
+    poly.num_terms = 0;
+    if (!self || !term) return &poly;
     LinearComboMap* owner = (LinearComboMap*)self;
     int lo = 0;
     int hi = owner->size;
@@ -98,9 +106,16 @@ static int LinearComboMap_getCoefficient(AbstractLinearCombo* self, Morphism* te
         }
     }
     if (lo < owner->size && morphismCompare(owner->terms[lo].morphism, term) == 0) {
-        return owner->terms[lo].coefficient;
+        int c = owner->terms[lo].coefficient;
+        if (c != 0) {
+            terms[0].q_exp = 0;
+            terms[0].t_exp = 0;
+            terms[0].coeff = c;
+            poly.num_terms = 1;
+        }
+        return &poly;
     }
-    return 0;
+    return &poly;
 }
 
 static bool LinearComboMap_ensureCapacity(LinearComboMap* self, int minCapacity) {

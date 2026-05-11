@@ -76,3 +76,59 @@ void bp_print(const BivariatePoly* p) {  //output
     }
     printf("\n");
 }
+
+char* bp_to_string(const BivariatePoly* p) {
+    if (!p || p->num_terms == 0) {
+        char* zero_str = malloc(2);
+        if (!zero_str) return NULL;
+        zero_str[0] = '0';
+        zero_str[1] = '\0';
+        return zero_str;
+    }
+
+    size_t buf_size = 256 + (size_t)p->num_terms * 64;
+    char* buffer = malloc(buf_size);
+    if (!buffer) return NULL;
+    size_t pos = 0;
+
+    for (int i = 0; i < p->num_terms; i++) {
+        int coeff = p->terms[i].coeff;
+        if (coeff == 0) continue;
+
+        if (pos == 0) {
+            if (coeff < 0) {
+                buffer[pos++] = '-';
+                buffer[pos] = '\0';
+            }
+        } else {
+            if (coeff < 0) {
+                pos += (size_t)snprintf(buffer + pos, buf_size - pos, " - ");
+            } else {
+                pos += (size_t)snprintf(buffer + pos, buf_size - pos, " + ");
+            }
+        }
+
+        int c = abs(coeff);
+        if (c != 1 || (p->terms[i].q_exp == 0 && p->terms[i].t_exp == 0)) {
+            pos += (size_t)snprintf(buffer + pos, buf_size - pos, "%d", c);
+        }
+        if (p->terms[i].q_exp != 0) {
+            pos += (size_t)snprintf(buffer + pos, buf_size - pos, "q^%d", p->terms[i].q_exp);
+        }
+        if (p->terms[i].t_exp != 0) {
+            pos += (size_t)snprintf(buffer + pos, buf_size - pos, "t^%d", p->terms[i].t_exp);
+        }
+
+        if (pos >= buf_size) {
+            buffer[buf_size - 1] = '\0';
+            break;
+        }
+    }
+
+    if (pos == 0) {
+        buffer[0] = '0';
+        buffer[1] = '\0';
+    }
+
+    return buffer;
+}
