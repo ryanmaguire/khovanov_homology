@@ -30,6 +30,40 @@ static int compute_writhe(int pd[][4], int m) {
     return w;
 }
 
+static int count_loops_and_min_labels(int pd[][4], int m, int r, int* loop_min) {
+    int next_edge[2 * m];          // 2m edges
+    int visited[2 * m] = {0};
+    int loop_count = 0;
+
+    // Build connectivity according to resolution r
+    for (int k = 0; k < m; k++) {
+        int a = pd[k][0], b = pd[k][1], c = pd[k][2], d = pd[k][3];
+        if ((r & (1 << k)) == 0) {        // 0-smoothing
+            next_edge[a] = b; next_edge[b] = a;
+            next_edge[c] = d; next_edge[d] = c;
+        } else {                          // 1-smoothing
+            next_edge[a] = d; next_edge[d] = a;
+            next_edge[b] = c; next_edge[c] = b;
+        }
+    }
+
+    // Trace all loops and record minimal edge label
+    for (int start = 0; start < 2 * m; start++) {
+        if (visited[start]) continue;
+        int min_label = start;
+        int current = start;
+        do {
+            visited[current] = 1;
+            if (current < min_label) min_label = current;
+            current = next_edge[current];
+        } while (current != start);
+
+        loop_min[loop_count++] = min_label;
+    }
+    return loop_count;
+}
+
+
 Knot* knot_from_pd(int pd[][4], int m) {
     Knot* k = malloc(sizeof(Knot));
     k->m = m;
