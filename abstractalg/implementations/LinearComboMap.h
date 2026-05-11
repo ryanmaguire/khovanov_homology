@@ -2,11 +2,11 @@
 #define LINEAR_COMBO_MAP_H
 
 #include "AbstractLinearCombo.h"
+#include "../../polynomial/polynomial/BivariatePoly.h"
 #include <stdbool.h>
-
 typedef struct {
     Morphism* morphism;
-    int coefficient;
+    BivariatePoly* coefficient; //Now a polynomial pointer
 } Term;
 
 typedef struct LinearComboMap LinearComboMap;
@@ -16,9 +16,9 @@ struct LinearComboMap {
     Term* terms;
     int size;
     int capacity;
-    LinearComboMap* (*addTerm)(LinearComboMap* self, Morphism* cc, int num);
+    LinearComboMap* (*addTerm)(LinearComboMap* self, Morphism* cc, BivariatePoly* num);
     LinearComboMap* (*addCombo)(LinearComboMap* self, LinearComboMap* other);
-    LinearComboMap* (*multiply)(LinearComboMap* self, int num);
+    LinearComboMap* (*multiply)(LinearComboMap* self, BivariatePoly* num);
     LinearComboMap* (*compose)(LinearComboMap* self, LinearComboMap* other);
     LinearComboMap* (*compact)(LinearComboMap* self);
     LinearComboMap* (*flexibleZeroLinearCombo)(void);
@@ -38,7 +38,7 @@ void LinearComboMap_init(LinearComboMap* self);
 //argument descriptions: self is the LinearComboMap pointer, cc is the Morphism* being added, num is the int coefficient
 //output: LinearComboMap*, a pointer to the modified LinearComboMap
 //method: checks if the term exists, updates or removes it if the sum is zero, otherwise inserts the new term
-LinearComboMap* LinearComboMap_addTerm(LinearComboMap* self, Morphism* cc, int num);
+LinearComboMap* LinearComboMap_addTerm(LinearComboMap* self, Morphism* cc, BivariatePoly* num);
 
 //purpose: add the contents of another linear combination to this one
 //arguments: self, other
@@ -54,7 +54,7 @@ LinearComboMap* LinearComboMap_addCombo(LinearComboMap* self, LinearComboMap* ot
 //output: LinearComboMap*
 //output description: pointer to the scaled LinearComboMap or NULL if zeroed
 //method: clears the map if num is zero, otherwise iterates through terms and multiplies each coefficient
-LinearComboMap* LinearComboMap_multiply(LinearComboMap* self, int num);
+LinearComboMap* LinearComboMap_multiply(LinearComboMap* self, BivariatePoly* num);
 
 //purpose: vertically compose two linear combinations
 //arguments: self, other

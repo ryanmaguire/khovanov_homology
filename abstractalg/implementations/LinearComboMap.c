@@ -9,6 +9,24 @@ typedef struct {
     int index;
 } LinearComboMapIteratorState;
 
+static bool bp_is_zero(const BivariatePoly* p) {
+    return p == NULL || p->num_terms == 0;
+}
+
+static BivariatePoly* clone_poly(const BivariatePoly* p) {
+    if (!p) return NULL;
+    BivariatePoly* copy = bp_create();
+    for(int i = 0; i < p->num_terms; i++) {
+        if (copy->num_terms == copy->capacity) {
+            copy->capacity *= 2;
+            copy->terms = realloc(copy->terms, copy->capacity * sizeof(Monomial));
+        }
+        copy->terms[i] = p->terms[i];
+        copy->num_terms++;
+    }
+    return copy;
+}
+
 static bool linearComboMapIterator_hasNext(MorphismIterator* self) {
     if (!self || !self->state) return false;
     LinearComboMapIteratorState* st = self->state;
@@ -84,18 +102,11 @@ static int morphismCompare(Morphism* a, Morphism* b) {
 }
 
 static BivariatePoly* LinearComboMap_getCoefficient(AbstractLinearCombo* self, Morphism* term) {
-    static Monomial terms[1];
-    static BivariatePoly poly = {
-        .terms = terms,
-        .num_terms = 0,
-        .capacity = 1,
-    };
-
-    poly.num_terms = 0;
-    if (!self || !term) return &poly;
+    if (!self || !term) return NULL;
     LinearComboMap* owner = (LinearComboMap*)self;
     int lo = 0;
     int hi = owner->size;
+    
     while (lo < hi) {
         int mid = lo + (hi - lo) / 2;
         int cmp = morphismCompare(owner->terms[mid].morphism, term);
@@ -106,16 +117,9 @@ static BivariatePoly* LinearComboMap_getCoefficient(AbstractLinearCombo* self, M
         }
     }
     if (lo < owner->size && morphismCompare(owner->terms[lo].morphism, term) == 0) {
-        int c = owner->terms[lo].coefficient;
-        if (c != 0) {
-            terms[0].q_exp = 0;
-            terms[0].t_exp = 0;
-            terms[0].coeff = c;
-            poly.num_terms = 1;
-        }
-        return &poly;
+        return owner->terms[lo].coefficient;
     }
-    return &poly;
+    return NULL;
 }
 
 static bool LinearComboMap_ensureCapacity(LinearComboMap* self, int minCapacity) {
@@ -160,32 +164,29 @@ void LinearComboMap_init(LinearComboMap* self) {
 //output: LinearComboMap*
 //output description: pointer to the modified LinearComboMap
 //method: we check if the term exists, update or remove it if the sum is zero, otherwise inserting the new term
-LinearComboMap* LinearComboMap_addTerm(LinearComboMap* self, Morphism* cc, int num) {
-    if (!self || !cc || num == 0) return self;
-    if (!self->terms && self->capacity > 0) {
-        self->terms = malloc(sizeof(Term) * (size_t)self->capacity);
-        if (!self->terms) {
-            self->capacity = 0;
-            self->size = 0;
-            return self;
-        }
+LinearComboMap* LinearComboMap_addTerm(LinearComboMap* self, Morphism* cc, BivariatePoly* num) {
+    if (!self || !cc || bp_is_zero(num)) {
+        if (num) bp_free(num); //prevent leaks even if returning early
+        return self;
     }
-
     int lo = 0;
     int hi = self->size;
     while (lo < hi) {
         int mid = lo + (hi - lo) / 2;
         int cmp = morphismCompare(self->terms[mid].morphism, cc);
-        if (cmp < 0) {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        }
+        if (cmp < 0) lo = mid + 1;
+        else hi = mid;
     }
 
+    //Found existing term
     if (lo < self->size && morphismCompare(self->terms[lo].morphism, cc) == 0) {
-        int newCoefficient = self->terms[lo].coefficient + num;
-        if (newCoefficient == 0) {
+        BivariatePoly* newCoefficient = bp_add(self->terms[lo].coefficient, num);
+        
+        bp_free(self->terms[lo].coefficient); // Free old
+        bp_free(num);                         // Free consumed argument
+        
+        if (bp_is_zero(newCoefficient)) {
+            bp_free(newCoefficient);
             memmove(&self->terms[lo], &self->terms[lo + 1], (size_t)(self->size - lo - 1) * sizeof(Term));
             self->size--;
             if (self->compact) return self->compact(self);
@@ -195,10 +196,14 @@ LinearComboMap* LinearComboMap_addTerm(LinearComboMap* self, Morphism* cc, int n
         return self;
     }
 
-    if (!LinearComboMap_ensureCapacity(self, self->size + 1)) return self;
+    //Not found, insert new term
+    if (!LinearComboMap_ensureCapacity(self, self->size + 1)) {
+        bp_free(num); //Prevent leak
+        return self; 
+    }
     memmove(&self->terms[lo + 1], &self->terms[lo], (size_t)(self->size - lo) * sizeof(Term));
     self->terms[lo].morphism = cc;
-    self->terms[lo].coefficient = num;
+    self->terms[lo].coefficient = num; 
     self->size++;
     return self;
 }
@@ -212,44 +217,55 @@ LinearComboMap* LinearComboMap_addTerm(LinearComboMap* self, Morphism* cc, int n
 //Method: Allocates a new buffer, linearly zips both sorted arrays, eliminates zeros, and swaps memory.
 LinearComboMap* LinearComboMap_addCombo(LinearComboMap* self, LinearComboMap* other) {
     if (!self || !other || other->size == 0) return self;
+    
     if (self->size == 0) {
         if (!LinearComboMap_ensureCapacity(self, other->size)) return self;
-        memcpy(self->terms, other->terms, (size_t)other->size * sizeof(Term));
+        for(int i = 0; i < other->size; i++) {
+            self->terms[i].morphism = other->terms[i].morphism;
+            self->terms[i].coefficient = clone_poly(other->terms[i].coefficient);
+        }
         self->size = other->size;
         return self;
     }
+    
     int maxCapacity = self->size + other->size;
     Term* mergedTerms = malloc(sizeof(Term) * maxCapacity);
     int mergedSize = 0;
 
-    int i = 0;
-    int j = 0;
+    int i = 0, j = 0;
     while (i < self->size && j < other->size) {
         int cmp = morphismCompare(self->terms[i].morphism, other->terms[j].morphism);
 
         if (cmp == 0) {
-            int newCoef = self->terms[i].coefficient + other->terms[j].coefficient;
+            BivariatePoly* newCoef = bp_add(self->terms[i].coefficient, other->terms[j].coefficient);
+            bp_free(self->terms[i].coefficient);
             
-            if (newCoef != 0) { 
+            if (!bp_is_zero(newCoef)) { 
                 mergedTerms[mergedSize].morphism = self->terms[i].morphism;
                 mergedTerms[mergedSize].coefficient = newCoef;
                 mergedSize++;
+            } else {
+                bp_free(newCoef); 
             }
-            i++;
-            j++;
+            i++; j++;
         } 
         else if (cmp < 0) {
             mergedTerms[mergedSize++] = self->terms[i++];
         } 
         else {
-            mergedTerms[mergedSize++] = other->terms[j++];
+            mergedTerms[mergedSize].morphism = other->terms[j].morphism;
+            mergedTerms[mergedSize].coefficient = clone_poly(other->terms[j].coefficient);
+            mergedSize++;
+            j++;
         }
     }
     while (i < self->size) {
         mergedTerms[mergedSize++] = self->terms[i++];
     }
     while (j < other->size) {
-        mergedTerms[mergedSize++] = other->terms[j++];
+        mergedTerms[mergedSize].morphism = other->terms[j].morphism;
+        mergedTerms[mergedSize].coefficient = clone_poly(other->terms[j].coefficient);
+        mergedSize++; j++;
     }
 
     free(self->terms);
@@ -264,16 +280,21 @@ LinearComboMap* LinearComboMap_addCombo(LinearComboMap* self, LinearComboMap* ot
 //output: LinearComboMap*
 //output description: pointer to the scaled LinearComboMap or null if zeroed
 //method: clears the map if num is zero, otherwise iterates through terms and multiplies each coefficient
-LinearComboMap* LinearComboMap_multiply(LinearComboMap* self, int num) {
-    if (num == 0) {
+LinearComboMap* LinearComboMap_multiply(LinearComboMap* self, BivariatePoly* num) {
+    if (bp_is_zero(num)) {
         if (!self) return self;
+        for(int i = 0; i < self->size; i++) {
+            bp_free(self->terms[i].coefficient);
+        }
         self->size = 0;
         if (self->flexibleZeroLinearCombo) return self->flexibleZeroLinearCombo();
         return self;
     }
     if (!self) return self;
     for (int i = 0; i < self->size; i++) {
-        self->terms[i].coefficient *= num;
+        BivariatePoly* newCoef = bp_multiply(self->terms[i].coefficient, num);
+        bp_free(self->terms[i].coefficient);
+        self->terms[i].coefficient = newCoef;
     }
     return self;
 }
@@ -289,15 +310,16 @@ LinearComboMap* LinearComboMap_compose(LinearComboMap* self, LinearComboMap* oth
     LinearComboMap* ret = self->flexibleZeroLinearCombo();
     if (!ret) return NULL;
     if (self->size == 0 || other->size == 0) return ret;
-
     for (int i = 0; i < self->size; i++) {
         Morphism* cc = self->terms[i].morphism;
-        int myCoef = self->terms[i].coefficient;
+        BivariatePoly* myCoef = self->terms[i].coefficient;
+        
         for (int j = 0; j < other->size; j++) {
             Morphism* occ = other->terms[j].morphism;
-            int otherCoef = other->terms[j].coefficient;
+            BivariatePoly* otherCoef = other->terms[j].coefficient;
+            
             Morphism* composedMor = self->composeMorphisms(cc, occ);
-            int composedCoef = myCoef * otherCoef;
+            BivariatePoly* composedCoef = bp_multiply(myCoef, otherCoef);
             LinearComboMap_addTerm(ret, composedMor, composedCoef);
         }
     }
