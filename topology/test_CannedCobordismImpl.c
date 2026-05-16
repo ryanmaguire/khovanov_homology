@@ -17,7 +17,6 @@
 #include "CannedCobordismImpl.h"
 #include "Cap.h"
 
-
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -455,6 +454,7 @@ static void test_compose_vertical_nontrivial(void) {
     d1->connectedComponent[i] = 0;
   d1->dots = (int8_t *)calloc((size_t)d1->ncc, sizeof(int8_t));
   d1->genus = (int8_t *)calloc((size_t)d1->ncc, sizeof(int8_t));
+  d1->dots[0] = 1;
   assert(CannedCobordismImpl_check(d1));
 
   /* cob2:  top=capB, bottom=capA  (so cob2.bottom == cob1.top) */
@@ -464,6 +464,7 @@ static void test_compose_vertical_nontrivial(void) {
     d2->connectedComponent[i] = 0;
   d2->dots = (int8_t *)calloc((size_t)d2->ncc, sizeof(int8_t));
   d2->genus = (int8_t *)calloc((size_t)d2->ncc, sizeof(int8_t));
+  d2->dots[0] = 1;
   assert(CannedCobordismImpl_check(d2));
 
   /* Compose: d2 on top of d1 (d1.top == capA == d2.bottom) */
