@@ -19,6 +19,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+
 /*
  *  CannedCobordismImplData
  *
@@ -27,32 +28,28 @@
  *      two Caps. This is what gets stored in CannedCobordism.impl_data.
  *
  *  Fields:
- *      n                   — number of boundary edges (same as top->n)
- *      hpower              — power of h (delooping parameter)
- *      top                 — source Cap (top boundary)
- *      bottom              — target Cap (bottom boundary)
- *      nbc                 — total number of boundary components
- *                            (mixed + top cycles + bottom cycles)
- *      offtop              — offset: boundary components [0, offtop) are
- *                            mixed; [offtop, offbot) are top cycles
- *      offbot              — offset: [offbot, nbc) are bottom cycles
- *      component           — array[n]: which mixed boundary component
- *                            each edge belongs to
+ *      n                   — number of boundary points (must match Caps)
+ *      hpower              — homological degree offset (power of h)
+ *      top, bottom         — pointers to the bounding Caps
+ *
+ *      nbc                 — number of boundary components
+ *      offtop, offbot      — offsets into the connectedComponent array
+ *      component           — array[n]: which component each edge belongs to
+ *                            (Flat-allocated with the struct)
+ *
  *      ncc                 — number of connected components
- *      connectedComponent  — array[nbc]: which connected component
- *                            each boundary component belongs to
+ *      connectedComponent  — array[nbc]: which connected component each BC belongs to
+ *                            (Flat-allocated with the struct)
  *      dots                — array[ncc]: dot count per connected component
  *      genus               — array[ncc]: genus per connected component
  *
  *      (Lazy, computed by reverseMaps:)
- *      boundaryComponents  — array[ncc] of arrays: which boundary
- *                            components belong to each connected component
- *      bc_sizes            — array[ncc]: size of each boundaryComponents
- *                            sub-array
- *      edges               — array[offtop] of arrays: which edges belong
- *                            to each mixed boundary component
+ *      boundaryComponents  — array[ncc] of pointers to BC lists
+ *      bc_sizes            — array[ncc]: size of each boundaryComponents sub-array
+ *      edges               — array[offtop] of pointers to edge lists
  *      edge_sizes          — array[offtop]: size of each edges sub-array
  *      reverse_maps_done   — flag: true after reverseMaps has been called
+ *
  *      hashcode            — cached hash code (0 if not yet computed)
  */
 typedef struct CannedCobordismImplData {
@@ -64,18 +61,19 @@ typedef struct CannedCobordismImplData {
   int8_t nbc;
   int offtop;
   int offbot;
-  int8_t *component; /* array[n]   */
+  int8_t *component;
 
   int8_t ncc;
-  int8_t *connectedComponent; /* array[nbc] */
-  int8_t *dots;               /* array[ncc] */
-  int8_t *genus;              /* array[ncc] */
+  int8_t *connectedComponent;
+  int8_t *dots;
+  int8_t *genus;
 
-  /* Lazy reverse maps (filled by CannedCobordismImpl_reverseMaps) */
-  int8_t **boundaryComponents; /* array[ncc] of int8_t arrays */
-  int *bc_sizes;               /* array[ncc] */
-  int8_t **edges;              /* array[offtop] of int8_t arrays */
-  int *edge_sizes;             /* array[offtop] */
+  int *bc_sizes;
+  int8_t **boundaryComponents;
+
+  int *edge_sizes;
+  int8_t **edges;
+
   bool reverse_maps_done;
 
   int hashcode;
@@ -97,15 +95,15 @@ typedef struct CannedCobordismImplData {
  *      bottom — the target (bottom) Cap
  *
  *  Output:
- *      Heap-allocated CannedCobordismImplData with component[]
- *      and connectedComponent[] initialised. The caller must fill
- *      in ncc, connectedComponent mappings, dots, and genus
- *      (or use a factory function that does so).
+ *      Heap-allocated CannedCobordismImplData. Uses a "Flat Allocation"
+ *      strategy: the struct and its primary arrays (component, connectedComponent)
+ *      are allocated as a single contiguous memory block to maximize cache
+ *      locality and minimize allocation overhead.
  *
  *  Method:
- *      Trace edges through top.pairings then bottom.pairings to
- *      identify mixed boundary components. Set offtop/offbot
- *      from the Cap ncycles values.
+ *      Pre-calculates the maximum possible footprint, allocates once, and
+ *      offsets pointers into the block. Then traces edges through pairings
+ *      to identify mixed boundary components.
  */
 CannedCobordismImplData *CannedCobordismImpl_create(Cap *top, Cap *bottom);
 
@@ -262,12 +260,11 @@ bool CannedCobordismImpl_check(const CannedCobordismImplData *impl);
  *
  *  Method:
  *      1. Call reverseMaps on both inputs.
- *      2. Create a new impl with top = cc.top, bottom = this.bottom.
- *      3. Merge connected components from both, tracking middle
- *         cycles with midConComp[].
+ *      2. Create a new impl via Flat Allocation.
+ *      3. Merge connected components using stack-allocated VLAs (safe due to
+ *         Fixed-Strand Conjecture bounds).
  *      4. Compute genus via Euler characteristic.
  *      5. Relabel connected components in ascending order.
- *      6. Collect unconnected components (genus/dots).
  */
 CannedCobordism *
 CannedCobordismImpl_compose_vertical(CannedCobordismImplData *this_impl,
@@ -338,10 +335,9 @@ CannedCobordismImpl_as_CannedCobordism(CannedCobordismImplData *impl);
  *      None.
  *
  *  Method:
- *      Free all owned arrays (component, connectedComponent, dots,
- *      genus, boundaryComponents, edges, bc_sizes, edge_sizes),
- *      then free the struct itself.
- *      Note: top and bottom Caps are NOT freed (not owned).
+ *      Frees the primary Flat Allocation block (which includes component and
+ *      connectedComponent) and then frees the lazily-allocated reverse mapping
+ *      structures.
  */
 void CannedCobordismImpl_free(CannedCobordismImplData *impl);
 
