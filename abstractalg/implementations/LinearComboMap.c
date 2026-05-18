@@ -1,3 +1,4 @@
+#include "../Morphism.h"
 #include "LinearComboMap.h"
 #include <stdlib.h>
 #include <string.h>
