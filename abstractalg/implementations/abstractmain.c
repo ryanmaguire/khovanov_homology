@@ -55,40 +55,38 @@ int main(void) {
     m2.base.compareTo = mock_morphismCompareTo;
     m2.name = "Morphism_B";
 
-    LinearComboMap myCombo;
-    LinearComboMap_init(&myCombo);
-    
-    myCombo.base.morphismToString = mock_morphismToString; 
+    LinearComboMap* myCombo = LinearComboMap_create(4);
+    if (!myCombo) return 1;
     printf("LinearComboMap initialized.\n");
 
     BivariatePoly* p1 = create_poly(2, 1, 0); 
-    LinearComboMap_addTerm(&myCombo, (Morphism*)&m1, p1);
+    LinearComboMap_putOrAdd(myCombo, (Morphism*)&m1, p1);
     
-    char* str1 = AbstractLinearCombo_toString((AbstractLinearCombo*)&myCombo);
+    char* str1 = AbstractLinearCombo_toString(myCombo->combo, mock_morphismToString);
     printf("Test 1 (Add): %s\n", str1 ? str1 : "NULL");
     free(str1);
 
     // erge a term
     //add (3q^1 * m1) should merge to become (5q^1 * m1)
     BivariatePoly* p2 = create_poly(3, 1, 0);
-    LinearComboMap_addTerm(&myCombo, (Morphism*)&m1, p2);
+    LinearComboMap_putOrAdd(myCombo, (Morphism*)&m1, p2);
 
-    char* str2 = AbstractLinearCombo_toString((AbstractLinearCombo*)&myCombo);
+    char* str2 = AbstractLinearCombo_toString(myCombo->combo, mock_morphismToString);
     printf("Test 2 (Merge): %s\n", str2 ? str2 : "NULL");
     free(str2);
 
     BivariatePoly* p3 = create_poly(-1, 0, 2);
-    LinearComboMap_addTerm(&myCombo, (Morphism*)&m2, p3);
+    LinearComboMap_putOrAdd(myCombo, (Morphism*)&m2, p3);
 
-    char* str3 = AbstractLinearCombo_toString((AbstractLinearCombo*)&myCombo);
+    char* str3 = AbstractLinearCombo_toString(myCombo->combo, mock_morphismToString);
     printf("Test 3 (Add New): %s\n", str3 ? str3 : "NULL");
     free(str3);
 
     //multiply the entire combo by (2q^1)
     BivariatePoly* scalar = create_poly(2, 1, 0);
-    LinearComboMap_multiply(&myCombo, scalar); 
+    LinearComboMap_multiply(myCombo, scalar); 
 
-    char* str4 = AbstractLinearCombo_toString((AbstractLinearCombo*)&myCombo);
+    char* str4 = AbstractLinearCombo_toString(myCombo->combo, mock_morphismToString);
     printf("Test 4 (Multiply): %s\n", str4 ? str4 : "NULL");
     free(str4);
     bp_free(scalar); 
@@ -100,10 +98,7 @@ int main(void) {
     if (zeroTerms == 0 && isZero == true) {
         printf("\n[SUCCESS] ZeroLinearCombo reported 0 terms and isZero = true.\n");
     }
-    for (int i = 0; i < myCombo.size; i++) {
-        bp_free(myCombo.terms[i].coefficient);
-    }
-    free(myCombo.terms);
+    LinearComboMap_free(myCombo);
 
     printf("All tests complete.\n");
 

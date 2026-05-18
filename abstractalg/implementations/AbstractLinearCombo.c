@@ -41,141 +41,85 @@ static void sb_append(StringBuilder* sb, const char* text) {
     sb->length += tlen;
 }
 
-//Purpose: Retrieve the first morphism term
-//Arguments: self
-//Argument descriptions: Pointer to the AbstractLinearCombo instance
-//Output: Morphism*
-//Output description: Pointer to the first Morphism or NULL if empty
-//Method: Create an iterator from terms collection, grab the first item, and free iterator
-Morphism* AbstractLinearCombo_firstTerm(AbstractLinearCombo* self) {
-    if (!self || !self->terms) return NULL;
-    MorphismCollection* terms_col = self->terms(self);
-    if (!terms_col || !terms_col->iterator) {
-        if (terms_col) free(terms_col); // fix memory leak
-        return NULL;
-    }
-    MorphismIterator* it = terms_col->iterator(terms_col);
-    Morphism* first = NULL;
-    if (it && it->hasNext && it->hasNext(it)) {
-        first = it->next(it);
-    }
-    
-    if (it && it->free) it->free(it); 
-    free(terms_col); //fix leak
-    return first;
-}
-
-//Purpose: Get the integer coefficient of the first term
-//Arguments: self
-//Argument descriptions: Pointer to the AbstractLinearCombo instance
-//Output: int
-//Output description: Integer coefficient or 0 if empty
-//Method: Get the first term and pass it to the getCoefficient function
-BivariatePoly* AbstractLinearCombo_firstCoefficient(AbstractLinearCombo* self) {
-    Morphism* first = AbstractLinearCombo_firstTerm(self);
-    if (first != NULL && self->getCoefficient) {
-        return self->getCoefficient(self, first);
-    }
-    return NULL; // Represents a zero/empty polynomial conceptually
-}
-//Purpose: Check if the linear combo has no terms
-//Arguments: self
-//Argument descriptions: Pointer to the AbstractLinearCombo instance
-//Output: bool
-//Output description: True if zero terms exist, false otherwise
-//Method: Check the terms collection using its isEmpty function
-bool AbstractLinearCombo_isZero(AbstractLinearCombo* self) {
-    if (!self || !self->terms) return true;
-    MorphismCollection* terms_col = self->terms(self);
-    if (!terms_col || !terms_col->isEmpty) {
-        if (terms_col) free(terms_col);
-        return true;
-    }
-    
-    bool result = terms_col->isEmpty(terms_col);
-    free(terms_col); // fix memory leak
-    return result;
-}
-
-//Purpose: Count the total number of terms
-//Arguments: self
-//Argument descriptions: Pointer to the AbstractLinearCombo instance
-//Output: int
-//Output description: Total number of topological terms
-//Method: query the terms collection using its size function
-int AbstractLinearCombo_numberOfTerms(AbstractLinearCombo* self) {
-    if (!self || !self->terms) return 0;
-    MorphismCollection* terms_col = self->terms(self);
-    if (!terms_col || !terms_col->size) {
-        if (terms_col) free(terms_col);
-        return 0;
-    }
-    
-    int count = terms_col->size(terms_col);
-    free(terms_col); 
-    return count;
-}
-
 //Purpose: Create a string of the math formula
-//Arguments: self
-//Argument descriptions: a pointer to the AbstractLinearCombo instance
+//Arguments: self, morphismToString
+//Argument descriptions: a pointer to the AbstractLinearCombo, and a function pointer to stringify a Morphism
 //Output: char*
 //Output description: Dynamically allocated formula string
-//Method: we iterate through terms, convert coefficients, and build the string
-char* AbstractLinearCombo_toString(AbstractLinearCombo* self) {
-    if (!self || !self->terms || !self->morphismToString) {
+//Method: Iterate through the flat elements array, convert coefficients, and build the string
+char* AbstractLinearCombo_toString(AbstractLinearCombo* self, char* (*morphismToString)(Morphism*)) {
+    if (!self || !morphismToString) {
         return NULL;
     }
 
-    MorphismCollection* terms_col = self->terms(self);
-    if (!terms_col || !terms_col->iterator) {
-        if (terms_col) free(terms_col);
-        return NULL; 
-    }
-
-    MorphismIterator* i = terms_col->iterator(terms_col);
-    if (!i) {
-        free(terms_col);
-        return NULL;
+    if (self->term_count == 0) {
+        char* zero_str = malloc(2);
+        if (zero_str) strcpy(zero_str, "0");
+        return zero_str;
     }
 
     StringBuilder sb;
     sb_init(&sb);
-
-    if (i->hasNext && i->hasNext(i)) {
-        Morphism* term = i->next(i);
-        BivariatePoly* coeff = self->getCoefficient(self, term);
+    for (int i = 0; i < self->term_count; i++) {
+        Morphism* term = self->elements[i].term;
+        BivariatePoly* coeff = self->elements[i].coeff;
         
-        char* coeff_str = bp_to_string(coeff); // Requires a new function in BivariatePoly.c
-        char* term_str = self->morphismToString(term);
+        //generate strings
+        char* coeff_str = bp_to_string(coeff); 
+        char* term_str = morphismToString(term);
 
+        //separator
+        if (i > 0) {
+            sb_append(&sb, " + ");
+        }
         sb_append(&sb, "(");
         sb_append(&sb, coeff_str);
         sb_append(&sb, ") * ");
         sb_append(&sb, term_str);
-        
-        free(coeff_str);
+        free(coeff_str); //freeing
         free(term_str);
     }
-
-    while (i->hasNext && i->hasNext(i)) {
-        Morphism* term = i->next(i);
-        BivariatePoly* coeff = self->getCoefficient(self, term);
-        
-        char* coeff_str = bp_to_string(coeff);
-        char* term_str = self->morphismToString(term);
-
-        sb_append(&sb, " + (");
-        sb_append(&sb, coeff_str);
-        sb_append(&sb, ") * ");
-        sb_append(&sb, term_str);
-        
-        free(coeff_str);
-        free(term_str);
-    }
-
-    if (i->free) i->free(i);
-    free(terms_col);
-
     return sb.str;
+}
+
+AbstractLinearCombo* AbstractLinearCombo_create(int initial_capacity) {
+    AbstractLinearCombo* combo = (AbstractLinearCombo*)malloc(sizeof(AbstractLinearCombo));
+    if (!combo) return NULL;
+    combo->term_count = 0;
+    combo->capacity = (initial_capacity > 0) ? initial_capacity : 4;
+    combo->elements = (TermPair*)malloc(combo->capacity * sizeof(TermPair));
+    if (!combo->elements) {
+        free(combo);
+        return NULL;
+    }
+    return combo;
+}
+
+void AbstractLinearCombo_addTerm(AbstractLinearCombo* self, Morphism* term, BivariatePoly* coeff) {
+    if (!self) return;
+    if (self->term_count >= self->capacity) {
+        self->capacity = (self->capacity == 0) ? 4 : self->capacity * 2;
+        TermPair* new_elements = (TermPair*)realloc(self->elements, self->capacity * sizeof(TermPair));
+        if (!new_elements) {
+            return;
+        }
+        self->elements = new_elements;
+    }
+    
+    self->elements[self->term_count].term = term;
+    self->elements[self->term_count].coeff = coeff;
+    self->term_count++;
+}
+
+void AbstractLinearCombo_free(AbstractLinearCombo* self) {
+    if (!self) return;
+    if (self->elements) {
+        for (int i = 0; i < self->term_count; i++) {
+            if (self->elements[i].coeff) {
+                bp_free(self->elements[i].coeff);
+            }
+        }
+        free(self->elements);
+    }
+    free(self);
 }

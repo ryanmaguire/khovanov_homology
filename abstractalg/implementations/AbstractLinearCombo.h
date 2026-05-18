@@ -5,69 +5,48 @@
 #include <stddef.h>
 #include "../../polynomial/polynomial/BivariatePoly.h"
 typedef struct Morphism Morphism;
-
-typedef struct MorphismIterator {
-    void* state; 
-    bool (*hasNext)(struct MorphismIterator* self);
-    Morphism* (*next)(struct MorphismIterator* self);
-    void (*free)(struct MorphismIterator* self); 
-} MorphismIterator;
-
-typedef struct MorphismCollection {
-    void* state; 
-    MorphismIterator* (*iterator)(struct MorphismCollection* self);
-    bool (*isEmpty)(struct MorphismCollection* self);
-    int (*size)(struct MorphismCollection* self);
-} MorphismCollection;
-
 typedef struct AbstractLinearCombo AbstractLinearCombo;
 
+typedef struct {
+    Morphism* term;
+    BivariatePoly* coeff;
+} TermPair;
+
 struct AbstractLinearCombo {
-    MorphismCollection* (*terms)(AbstractLinearCombo* self);
-    
-    // CHANGED: Now returns a pointer to a BivariatePoly instead of an int
-    BivariatePoly* (*getCoefficient)(AbstractLinearCombo* self, Morphism* term);
-    
-    char* (*morphismToString)(Morphism* m);
+    int term_count;
+    int capacity;
+    TermPair* elements; //contiguous array of terms and coefficients
 };
-//Purpose: Retrieve the first morphism term
-//Arguments: self
-//Argument descriptions: Pointer to the AbstractLinearCombo instance
-//Output: Morphism*
-//Output description: Pointer to the first Morphism or null if empty
-//Method: Create an iterator from terms collection, grab the first item, and free iterator
-Morphism* AbstractLinearCombo_firstTerm(AbstractLinearCombo* self);
-
-//Purpose: Get the integer coefficient of the first term
-//Arguments: self
-//Argument descriptions: Pointer to the AbstractLinearCombo instance
-//Output: int
-//Output description: Integer coefficient or 0 if empty
-//Method: Get the first term and pass it to the getCoefficient function
-BivariatePoly* AbstractLinearCombo_firstCoefficient(AbstractLinearCombo* self);
-
-//Purpose: Check if the linear combo has no terms
-//Arguments: self
-//Argument descriptions: Pointer to the AbstractLinearCombo instance
-//Output: bool
-//Output description: True if zero terms exist, false otherwise
-//Method: Check the terms collection using its isEmpty function
-bool AbstractLinearCombo_isZero(AbstractLinearCombo* self);
+static inline bool AbstractLinearCombo_isZero(AbstractLinearCombo* self) {
+    if (!self) return true;
+    return self->term_count == 0;
+}
 
 //Purpose: Count the total number of terms
-//Arguments: self
-//Argument descriptions: Pointer to the AbstractLinearCombo instance
-//Output: int
-//Output description: Total number of topological terms
-//Method: Query the terms collection using its size function
-int AbstractLinearCombo_numberOfTerms(AbstractLinearCombo* self);
+static inline int AbstractLinearCombo_numberOfTerms(AbstractLinearCombo* self) {
+    if (!self) return 0;
+    return self->term_count;
+}
+
+//Purpose: Retrieve the first morphism term
+static inline Morphism* AbstractLinearCombo_firstTerm(AbstractLinearCombo* self) {
+    if (!self || self->term_count == 0) return NULL;
+    return self->elements[0].term;
+}
+
+//Purpose: Get the integer coefficient of the first term
+static inline BivariatePoly* AbstractLinearCombo_firstCoefficient(AbstractLinearCombo* self) {
+    if (!self || self->term_count == 0) return NULL;
+    return self->elements[0].coeff;
+}
 
 //Purpose: Create a string of the math formula
-//Arguments: self
-//Argument descriptions: Pointer to the AbstractLinearCombo instance
-//Output: char*
-// Output description: Dynamically allocated formula string
-//Method: Iterate through terms, convert coefficients, and build the string dynamically
-char* AbstractLinearCombo_toString(AbstractLinearCombo* self);
+char* AbstractLinearCombo_toString(AbstractLinearCombo* self, char* (*morphismToString)(Morphism*));
+AbstractLinearCombo* AbstractLinearCombo_create(int initial_capacity);
 
+//adds a term/coefficient pair, automatically resizing the array if needed
+void AbstractLinearCombo_addTerm(AbstractLinearCombo* self, Morphism* term, BivariatePoly* coeff);
+
+//frees the struct
+void AbstractLinearCombo_free(AbstractLinearCombo* self);
 #endif
