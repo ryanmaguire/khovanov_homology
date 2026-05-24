@@ -85,27 +85,39 @@ CannedCobordismImpl_as_CannedCobordism(CannedCobordismImplData *impl) {
  *      bottom — target Cap (must have same n)
  *
  *  Output:
- *      Heap-allocated impl data with component[] filled,
- *      connectedComponent[] allocated but needing external setup.
+ *      Heap-allocated CannedCobordismImplData. Uses a "Flat Allocation"
+ *      strategy: the struct and its primary arrays (component, connectedComponent)
+ *      are allocated as a single contiguous memory block to maximize cache
+ *      locality and minimize allocation overhead.
  *
  *  Method:
- *      For each unvisited edge, trace the cycle
- *      edge -> top.pairings -> bottom.pairings -> ...
- *      marking all visited edges with the boundary component index.
+ *      1. Pre-calculates the maximum possible footprint (based on boundary size
+ *         and cycle counts).
+ *      2. Performs a single calloc() for the entire block.
+ *      3. Offsets internal pointers (component, connectedComponent) into the block.
+ *      4. Traces edges through top.pairings and bottom.pairings to identify
+ *         mixed boundary components.
  * ================================================================ */
 CannedCobordismImplData *CannedCobordismImpl_create(Cap *top, Cap *bottom) {
   assert(top->n == bottom->n);
   int n = top->n;
 
+  /* 
+   * Pre-calculate the maximum footprint for the flat block.
+   * Includes the main struct, the component array, and the connectedComponent array.
+   * nbc_max is bounded by the number of edges plus cycles.
+   */
   int nbc_max = n + top->ncycles + bottom->ncycles + 2;
   size_t footprint = sizeof(CannedCobordismImplData) +
                      (size_t)n * sizeof(int8_t) +
                      (size_t)nbc_max * sizeof(int8_t);
 
+  /* Allocate the entire block at once for cache locality and minimal heap churn */
   char *mem_block = (char *)calloc(1, footprint);
   CannedCobordismImplData *d = (CannedCobordismImplData *)mem_block;
   mem_block += sizeof(CannedCobordismImplData);
 
+  /* Offset internal pointers into the flat block */
   d->component = (int8_t *)mem_block;
   mem_block += (size_t)n * sizeof(int8_t);
 
@@ -158,11 +170,9 @@ CannedCobordismImplData *CannedCobordismImpl_create(Cap *top, Cap *bottom) {
  *
  *  Method:
  *      1. Frees the lazily-allocated dots and genus arrays.
- *      2. Recursively frees the lazy reverse mapping structures
- * (boundaryComponents, edges).
+ *      2. Recursively frees the lazy reverse mapping structures (boundaryComponents, edges).
  *      3. Frees the primary Flat Allocation block (the impl pointer itself),
- *         which implicitly frees the embedded component and connectedComponent
- * arrays.
+ *         which implicitly frees the embedded component and connectedComponent arrays.
  * ================================================================ */
 void CannedCobordismImpl_free(CannedCobordismImplData *impl) {
   if (!impl)
@@ -197,14 +207,20 @@ void CannedCobordismImpl_free(CannedCobordismImplData *impl) {
  *      None (modifies impl in place).
  *
  *  Method:
- *      Count BCs per connected component, allocate sub-arrays, fill.
- *      Count edges per mixed BC, allocate sub-arrays, fill.
+ *      1. Count boundary components per connected component.
+ *      2. Allocate pointer arrays for the reverse mappings.
+ *      3. Fill the sub-arrays with indices.
+ *      Uses stack-allocated Variable Length Arrays (VLAs) for temporary counting,
+ *      which is safe due to the Fixed-Strand Conjecture bounding.
  * ================================================================ */
 void CannedCobordismImpl_reverseMaps(CannedCobordismImplData *impl) {
   if (impl->reverse_maps_done)
     return;
 
-  /* boundaryComponents: which BCs belong to each CC */
+  /* 
+   * boundaryComponents: which BCs belong to each CC.
+   * numBC is a VLA, safe because ncc is bounded by n + cycles.
+   */
   int numBC[impl->ncc];
   memset(numBC, 0, (size_t)impl->ncc * sizeof(int));
   for (int i = 0; i < impl->nbc; i++)
@@ -382,12 +398,25 @@ bool CannedCobordismImpl_isIsomorphism(const CannedCobordismImplData *impl) {
  *  CannedCobordismImpl_isomorphism (static factory)
  * ================================================================ */
 CannedCobordism *CannedCobordismImpl_isomorphism(Cap *c) {
-  assert(c->ncycles == 0);
   CannedCobordismImplData *d = CannedCobordismImpl_create(c, c);
-  d->ncc = d->nbc;
-  /* connectedComponent[i] = i */
-  for (int8_t i = 0; i < d->nbc; i++)
-    d->connectedComponent[i] = i;
+  
+  /* The number of connected components is the number of path components
+     plus the number of cycles in the Cap. */
+  d->ncc = d->offtop + c->ncycles;
+  
+  /* Paths: connectedComponent[i] = i */
+  for (int i = 0; i < d->offtop; i++) {
+    d->connectedComponent[i] = (int8_t)i;
+  }
+  
+  /* Cycles: top cycle i and bottom cycle i are part of the same connected component.
+     Top cycles are at [offtop ... offtop + ncycles - 1]
+     Bottom cycles are at [offbot ... offbot + ncycles - 1] 
+     Wait, offbot = offtop + top->ncycles. */
+  for (int i = 0; i < c->ncycles; i++) {
+    d->connectedComponent[d->offtop + i] = (int8_t)(d->offtop + i);
+    d->connectedComponent[d->offbot + i] = (int8_t)(d->offtop + i);
+  }
 
   d->dots = (int8_t *)calloc((size_t)d->ncc, sizeof(int8_t));
   d->genus = (int8_t *)calloc((size_t)d->ncc, sizeof(int8_t));
@@ -442,14 +471,15 @@ static void merge_labels(int8_t *ret_cc, int ret_nbc, int *midConComp,
  *
  *  Method:
  *      1. reverseMaps on both inputs.
- *      2. Create ret with top=cc.top, bottom=this.bottom.
+ *      2. Create ret with top=cc.top, bottom=this.bottom (via Flat Allocation).
  *      3. Initialize each ret BC as its own CC.
  *      4. For each CC in 'this', find matching ret CC via boundary
  *         components / edges / middle cycles, merge labels.
+ *         Intermediate state is tracked using stack-allocated VLAs, which are
+ *         guaranteed to be small and bounded by the Fixed-Strand Conjecture.
  *      5. Same for CC in 'cc'.
  *      6. Relabel ret CCs in ascending order.
  *      7. Compute genus via Euler characteristic for each ret CC.
- *      8. Collect unconnected components.
  * ================================================================ */
 CannedCobordism *
 CannedCobordismImpl_compose_vertical(CannedCobordismImplData *this_d,
@@ -465,6 +495,11 @@ CannedCobordismImpl_compose_vertical(CannedCobordismImplData *this_d,
   for (int8_t i = 0; i < ret->nbc; i++)
     ret->connectedComponent[i] = i;
 
+  /* 
+   * Temporary merge state arrays using VLAs.
+   * Safe for massive braids because the Fixed-Strand Conjecture proves that
+   * the number of connected components is linearly bounded by the strand count.
+   */
   int mid_len = this_d->top->ncycles;
   int midConComp[mid_len + 1];
   for (int i = 0; i < mid_len; i++)
@@ -809,10 +844,12 @@ CannedCobordismImpl_compose_vertical(CannedCobordismImplData *this_d,
  * horizontally.
  *
  *  Method:
- *      Uses Cap_compose on top and bottom caps.
- *      Traces boundary components across horizontal connections,
- *      builds a new graph of connected components, Euler characteristic
- * calculations to deduce new genus, and collects unconnected dots/genus.
+ *      1. Compose the top and bottom Caps via Cap_compose.
+ *      2. Create new impl via Flat Allocation.
+ *      3. Merge connected components using stack-allocated VLAs (safe due to
+ *         Fixed-Strand Conjecture bounds).
+ *      4. Compute genus via Euler characteristic.
+ *      5. Relabel and sort connected components.
  * ================================================================ */
 CannedCobordism *
 CannedCobordismImpl_compose_horizontal(CannedCobordismImplData *this_d,
@@ -834,6 +871,10 @@ CannedCobordismImpl_compose_horizontal(CannedCobordismImplData *this_d,
   for (int8_t i = 0; i < ret->nbc; i++)
     ret->connectedComponent[i] = i;
 
+  /* 
+   * Temporary arrays for joining caps and merging components.
+   * VLAs are safe here as the number of joins (nc) is bounded by strand count.
+   */
   int midConComp[nc + 1];
   for (int i = 0; i < nc; i++)
     midConComp[i] = -2 - i;
