@@ -1,280 +1,283 @@
-#include "Komplex.h"
-
-#include <stdlib.h>
-
 /*
- * Optional helper functions.
- * These are not declared in CobMatrix.h, but the implementation may provide
- * them elsewhere. Keeping the declarations here makes this translation unit
- * self-contained.
+ *  Komplex.c
+ *
+ *  Bar-Natan Khovanov Chain Complex with full Schur complement
+ *  Gaussian elimination, guided by the topological Morse oracle.
+ *
+ *  Purpose:
+ *      Implements the algebraic Phase 2 of the FPT algorithm.
+ *      The blockReductionLemma performs the complete Schur complement
+ *      update D' = D - C·φ⁻¹·B on the differential, and propagates
+ *      generator removal to adjacent differentials.
+ *
+ *  Compile:
+ *      gcc -Wall -Wextra -g -c Komplex.c -I.
  */
+#include "Komplex.h"
+#include <stdlib.h>
+#include <stdio.h>
+/* ================================================================
+ *  Forward declarations for LCCC operations.
+ *  These are provided by LCCC.c (or stub implementations in tests).
+ * ================================================================ */
 extern LCCC *LCCC_invert(LCCC *lc);
 extern LCCC *LCCC_negate(LCCC *lc);
-
-static LCCC *find_entry_value(const CobMatrix *m, int row_idx, int col_idx) {
-    if (m == NULL || m->entries == NULL) {
-        return NULL;
-    }
-    MatrixEntry *cur = m->entries[row_idx].head;
-    while (cur != NULL) {
-        if (cur->column_index == col_idx) {
-            return cur->value;
-        }
-        cur = cur->next;
-    }
-    return NULL;
-}
-
+/* ================================================================
+ *  Construction / Destruction
+ * ================================================================ */
 Komplex *Komplex_create(int length) {
-    if (length < 0) {
-        return NULL;
-    }
-
-    Komplex *k = (Komplex *)malloc(sizeof(Komplex));
-    if (k == NULL) {
-        return NULL;
-    }
-
-    k->length = length;
+  Komplex *k = (Komplex *)malloc(sizeof(Komplex));
+  k->length = length;
+  if (length > 1) {
+    k->differentials = (CobMatrix **)calloc(length - 1, sizeof(CobMatrix *));
+  } else {
     k->differentials = NULL;
-
-    if (length > 1) {
-        k->differentials = (CobMatrix **)calloc((size_t)(length - 1), sizeof(CobMatrix *));
-        if (k->differentials == NULL) {
-            free(k);
-            return NULL;
-        }
-    }
-
-    return k;
+  }
+  k->chain_groups = (SmoothingColumn **)calloc(length, sizeof(SmoothingColumn *));
+  return k;
 }
-
 void Komplex_free(Komplex *k) {
-    if (k == NULL) {
-        return;
+  if (!k)
+    return;
+  for (int i = 0; i < k->length - 1; i++) {
+    if (k->differentials[i]) {
+      CobMatrix_free(k->differentials[i]);
     }
-
-    int n_diff = (k->length > 1) ? (k->length - 1) : 0;
-    for (int i = 0; i < n_diff; ++i) {
-        if (k->differentials != NULL && k->differentials[i] != NULL) {
-            CobMatrix_free(k->differentials[i]);
-            k->differentials[i] = NULL;
-        }
-    }
-
-    free(k->differentials);
-    free(k);
+  }
+  free(k->differentials);
+  
+  if (k->chain_groups) {
+    /* Ownership of SmoothingColumns is tricky; if they are managed by chain_groups, free them.
+     * But they might be aliased by CobMatrix source/target.
+     * For now we just free the array. */
+    free(k->chain_groups);
+  }
+  free(k);
 }
-
-bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col, int target_row) {
-    if (k == NULL || k->differentials == NULL) {
-        return false;
+/* ================================================================
+ *  Block Reduction Lemma — Full Schur Complement
+ *
+ *  Given: D = differentials[chain_idx] with pivot φ = D[target_row][source_col]
+ *
+ *  We write D in block form:
+ *
+ *              source_col    rest
+ *  target_row [   φ    |    B   ]
+ *  rest       [   C    |    D₀  ]
+ *
+ *  The reduced differential is:
+ *      D' = D₀ - C · φ⁻¹ · B
+ *
+ *  Additionally:
+ *  - d_{chain_idx-1} loses its row corresponding to source_col
+ *    (since source_col is a target index in d_{chain_idx-1})
+ *  - d_{chain_idx+1} loses its column corresponding to target_row
+ *    (since target_row is a source index in d_{chain_idx+1})
+ * ================================================================ */
+bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
+                                 int target_row) {
+  if (chain_idx < 0 || chain_idx >= k->length - 1)
+    return false;
+  CobMatrix *D = k->differentials[chain_idx];
+  if (!D)
+    return false;
+  /* Validate indices */
+  if (source_col < 0 || source_col >= D->source->n)
+    return false;
+  if (target_row < 0 || target_row >= D->target->n)
+    return false;
+  /* ---- Step 1: Extract the pivot φ = D[target_row][source_col] ---- */
+  LCCC *phi = NULL;
+  {
+    MatrixEntry *cur = D->entries[target_row].head;
+    while (cur != NULL) {
+      if (cur->column_index == source_col) {
+        phi = cur->value;
+        break;
+      }
+      cur = cur->next;
     }
-    if (chain_idx < 0 || chain_idx >= k->length - 1) {
-        return false;
+  }
+  /* The oracle guarantees this is an isomorphism, but verify */
+  if (phi == NULL || LCCC_isZero(phi))
+    return false;
+  /* ---- Step 2: Compute φ⁻¹ ---- */
+  LCCC *phi_inv = LCCC_invert(phi);
+  /* ---- Step 3: Extract row B = D[target_row][*] (excluding source_col) ---- */
+  /* And column C = D[*][source_col] (excluding target_row)              */
+  /* Unpack the pivot row: B[j] = D[target_row][j] for j ≠ source_col */
+  LCCC **B_row = CobMatrix_unpackRow(D, target_row);
+  /* Unpack the pivot column: C[i] = D[i][source_col] for i ≠ target_row */
+  int n_rows = D->target->n;
+  int n_cols = D->source->n;
+  LCCC **C_col = (LCCC **)calloc((size_t)n_rows, sizeof(LCCC *));
+  for (int i = 0; i < n_rows; i++) {
+    MatrixEntry *cur = D->entries[i].head;
+    while (cur != NULL) {
+      if (cur->column_index == source_col) {
+        C_col[i] = cur->value;
+        break;
+      }
+      cur = cur->next;
     }
-
-    CobMatrix *D = k->differentials[chain_idx];
-    if (D == NULL || D->source == NULL || D->target == NULL || D->entries == NULL) {
-        return false;
+  }
+  /* ---- Step 4: Schur complement: D[i][j] -= C[i] · φ⁻¹ · B[j] ---- */
+  for (int i = 0; i < n_rows; i++) {
+    if (i == target_row) continue;
+    if (C_col[i] == NULL || LCCC_isZero(C_col[i])) continue;
+    /* Compute C[i] · φ⁻¹ */
+    LCCC *ci_phi_inv = LCCC_compose(C_col[i], phi_inv);
+    if (ci_phi_inv == NULL || LCCC_isZero(ci_phi_inv)) {
+      LCCC_free(ci_phi_inv);
+      continue;
     }
-
-    if (source_col < 0 || source_col >= D->source->n) {
-        return false;
+    for (int j = 0; j < n_cols; j++) {
+      if (j == source_col) continue;
+      if (B_row[j] == NULL || LCCC_isZero(B_row[j])) continue;
+      /* Compute ci_phi_inv · B[j] = C[i] · φ⁻¹ · B[j] */
+      LCCC *correction = LCCC_compose(ci_phi_inv, B_row[j]);
+      if (correction == NULL || LCCC_isZero(correction)) {
+        LCCC_free(correction);
+        continue;
+      }
+      /*
+       * Over F_2, subtraction = addition, so:
+       * D[i][j] -= correction  ≡  D[i][j] += correction
+       *
+       * Use LCCC_negate for generality (identity over F_2).
+       */
+      LCCC *neg_correction = LCCC_negate(correction);
+      CobMatrix_addEntry(D, i, j, neg_correction);
+      LCCC_free(correction);
+      /* Note: neg_correction ownership is transferred to addEntry */
     }
-    if (target_row < 0 || target_row >= D->target->n) {
-        return false;
+    LCCC_free(ci_phi_inv);
+  }
+  free(B_row);
+  free(C_col);
+  LCCC_free(phi_inv);
+  /* ---- Step 5: Remove source_col and target_row from D ---- */
+  CobMatrix *removed_col = CobMatrix_extractColumn(D, source_col);
+  CobMatrix *removed_row = CobMatrix_extractRow(D, target_row);
+  CobMatrix_free(removed_col);
+  CobMatrix_free(removed_row);
+  /* ---- Step 6: Update adjacent differential d_{chain_idx - 1} ---- */
+  /*
+   * d_{prev} maps C_{chain_idx-1} → C_{chain_idx}.
+   * d_{prev}->target = C_{chain_idx} generators.
+   * We removed source_col from C_{chain_idx}, so remove that row
+   * from d_{prev}.
+   */
+  if (chain_idx > 0 && k->differentials[chain_idx - 1] != NULL) {
+    CobMatrix *d_prev = k->differentials[chain_idx - 1];
+    if (source_col < d_prev->target->n) {
+      CobMatrix *prev_removed = CobMatrix_extractRow(d_prev, source_col);
+      CobMatrix_free(prev_removed);
     }
-
-    /* Pivot entry φ = D[target_row][source_col]. */
-    LCCC *phi = find_entry_value(D, target_row, source_col);
-    if (phi == NULL || LCCC_isZero(phi)) {
-        return false;
+  }
+  /* ---- Step 7: Update adjacent differential d_{chain_idx + 1} ---- */
+  /*
+   * d_{next} maps C_{chain_idx+1} → C_{chain_idx+2}.
+   * d_{next}->source = C_{chain_idx+1} generators.
+   * We removed target_row from C_{chain_idx+1}, so remove that
+   * column from d_{next}.
+   */
+  if (chain_idx + 1 < k->length - 1 && k->differentials[chain_idx + 1] != NULL) {
+    CobMatrix *d_next = k->differentials[chain_idx + 1];
+    if (target_row < d_next->source->n) {
+      CobMatrix *next_removed = CobMatrix_extractColumn(d_next, target_row);
+      CobMatrix_free(next_removed);
     }
-
-    LCCC *phi_inv = LCCC_invert(phi);
-    if (phi_inv == NULL || LCCC_isZero(phi_inv)) {
-        if (phi_inv != NULL) {
-            LCCC_free(phi_inv);
-        }
-        return false;
-    }
-
-    const int n_rows = D->target->n;
-    const int n_cols = D->source->n;
-
-    /* B_row[j] = D[target_row][j] for j != source_col. */
-    LCCC **B_row = CobMatrix_unpackRow(D, target_row);
-    if (B_row == NULL) {
-        LCCC_free(phi_inv);
-        return false;
-    }
-
-    /* C_col[i] = D[i][source_col] for i != target_row. */
-    LCCC **C_col = (LCCC **)calloc((size_t)n_rows, sizeof(LCCC *));
-    if (C_col == NULL) {
-        free(B_row);
-        LCCC_free(phi_inv);
-        return false;
-    }
-
-    for (int i = 0; i < n_rows; ++i) {
-        C_col[i] = find_entry_value(D, i, source_col);
-    }
-
-    /*
-     * Schur complement update:
-     * D[i][j] <- D[i][j] - C[i] * phi^{-1} * B[j]
-     *
-     * If the coefficient ring has characteristic 2, subtraction is addition;
-     * otherwise we negate the correction before inserting it.
-     */
-    for (int i = 0; i < n_rows; ++i) {
-        if (i == target_row) {
-            continue;
-        }
-        if (C_col[i] == NULL || LCCC_isZero(C_col[i])) {
-            continue;
-        }
-
-        LCCC *ci_phi_inv = LCCC_compose(C_col[i], phi_inv);
-        if (ci_phi_inv == NULL || LCCC_isZero(ci_phi_inv)) {
-            if (ci_phi_inv != NULL) {
-                LCCC_free(ci_phi_inv);
-            }
-            continue;
-        }
-
-        for (int j = 0; j < n_cols; ++j) {
-            if (j == source_col) {
-                continue;
-            }
-            if (B_row[j] == NULL || LCCC_isZero(B_row[j])) {
-                continue;
-            }
-
-            LCCC *correction = LCCC_compose(ci_phi_inv, B_row[j]);
-            if (correction == NULL || LCCC_isZero(correction)) {
-                if (correction != NULL) {
-                    LCCC_free(correction);
-                }
-                continue;
-            }
-
-            LCCC *neg_correction = LCCC_negate(correction);
-            if (neg_correction == NULL) {
-                /*
-                 * Fallback for implementations that only support characteristic 2.
-                 * In that setting, subtraction and addition coincide.
-                 */
-                neg_correction = correction;
-                correction = NULL;
-            }
-
-            CobMatrix_addEntry(D, i, j, neg_correction);
-
-            if (correction != NULL) {
-                LCCC_free(correction);
-            }
-        }
-
-        LCCC_free(ci_phi_inv);
-    }
-
-    free(B_row);
-    free(C_col);
-    LCCC_free(phi_inv);
-
-    /*
-     * Remove the pivot row/column from the matrix itself.
-     * These functions are assumed to mutate D and return the removed slice.
-     */
-    CobMatrix *removed_col = CobMatrix_extractColumn(D, source_col);
-    CobMatrix *removed_row = CobMatrix_extractRow(D, target_row);
-    if (removed_col != NULL) {
-        CobMatrix_free(removed_col);
-    }
-    if (removed_row != NULL) {
-        CobMatrix_free(removed_row);
-    }
-
-    /* Update the previous differential: remove the row corresponding to source_col. */
-    if (chain_idx > 0 && k->differentials[chain_idx - 1] != NULL) {
-        CobMatrix *d_prev = k->differentials[chain_idx - 1];
-        if (d_prev->target != NULL && source_col < d_prev->target->n) {
-            CobMatrix *prev_removed = CobMatrix_extractRow(d_prev, source_col);
-            if (prev_removed != NULL) {
-                CobMatrix_free(prev_removed);
-            }
-        }
-    }
-
-    /* Update the next differential: remove the column corresponding to target_row. */
-    if (chain_idx + 1 < k->length - 1 && k->differentials[chain_idx + 1] != NULL) {
-        CobMatrix *d_next = k->differentials[chain_idx + 1];
-        if (d_next->source != NULL && target_row < d_next->source->n) {
-            CobMatrix *next_removed = CobMatrix_extractColumn(d_next, target_row);
-            if (next_removed != NULL) {
-                CobMatrix_free(next_removed);
-            }
-        }
-    }
-
-    return true;
+  }
+  return true;
 }
-
+/* ================================================================
+ *  Oracle-Driven Reduction
+ * ================================================================ */
 int Komplex_reduce_with_oracle(Komplex *k, const CollapseSchedule *schedule) {
-    if (k == NULL || schedule == NULL) {
-        return 0;
+  int reductions = 0;
+  for (int step = 0; step < schedule->count; step++) {
+    int ci = schedule->chain_idx[step];
+    int sc = schedule->source_col[step];
+    int tr = schedule->target_row[step];
+    /* Skip invalid entries (unmapped pairs) */
+    if (ci < 0 || sc < 0 || tr < 0)
+      continue;
+    if (Komplex_blockReductionLemma(k, ci, sc, tr)) {
+      reductions++;
     }
-    if (schedule->count <= 0 || schedule->chain_idx == NULL ||
-        schedule->source_col == NULL || schedule->target_row == NULL) {
-        return 0;
-    }
-
-    int reductions = 0;
-    for (int step = 0; step < schedule->count; ++step) {
-        int ci = schedule->chain_idx[step];
-        int sc = schedule->source_col[step];
-        int tr = schedule->target_row[step];
-
-        if (ci < 0 || sc < 0 || tr < 0) {
-            continue;
-        }
-
-        if (Komplex_blockReductionLemma(k, ci, sc, tr)) {
-            ++reductions;
-        }
-    }
-
-    return reductions;
+  }
+  return reductions;
 }
-
+/* ================================================================
+ *  Greedy Algebraic Reduction
+ * ================================================================ */
+/* Forward declaration for isIsomorphism. Over F_2, we can just check if
+   it evaluates to a single CannedCobordism that is an isomorphism. 
+   We assume LCCC_isIsomorphism is available or we check it manually. */
+static bool is_isomorphism(LCCC *lc) {
+  if (lc == NULL || LCCC_isZero(lc)) return false;
+  /* An LCCC over F_2 is an isomorphism if it has exactly one term
+     and that term is an isomorphism. */
+  if (lc->head != NULL && lc->head->next == NULL) {
+    CannedCobordism *cc = lc->head->cobordism;
+    if (cc != NULL && cc->isIsomorphism != NULL) {
+      return cc->isIsomorphism(cc);
+    }
+  }
+  return false;
+}
+int Komplex_greedyReduce(Komplex *k) {
+  int reductions = 0;
+  bool reduced;
+  do {
+    reduced = false;
+    for (int ci = 0; ci < k->length - 1; ci++) {
+      CobMatrix *D = k->differentials[ci];
+      if (!D) continue;
+      
+      /* Search for an isomorphism in D */
+      for (int tr = 0; tr < D->target->n; tr++) {
+        MatrixEntry *cur = D->entries[tr].head;
+        while (cur != NULL) {
+          int sc = cur->column_index;
+          if (is_isomorphism(cur->value)) {
+            if (Komplex_blockReductionLemma(k, ci, sc, tr)) {
+              reductions++;
+              reduced = true;
+              break; /* Break out of while loop, D has changed */
+            }
+          }
+          cur = cur->next;
+        }
+        if (reduced) break; /* Break out of target loop */
+      }
+      if (reduced) break; /* Restart the full scan from ci=0 because adjacent matrices changed */
+    }
+  } while (reduced);
+  
+  return reductions;
+}
+/* ================================================================
+ *  Chain Complex Verification: d² = 0
+ * ================================================================ */
 bool Komplex_verify_d_squared(const Komplex *k) {
-    if (k == NULL || k->length <= 2 || k->differentials == NULL) {
-        return true;
+  if (k->length <= 2)
+    return true; /* Nothing to check with 0 or 1 differentials */
+  for (int i = 0; i < k->length - 2; i++) {
+    CobMatrix *d_i = k->differentials[i];
+    CobMatrix *d_ip1 = k->differentials[i + 1];
+    if (d_i == NULL || d_ip1 == NULL)
+      continue;
+    /* Compute d_{i+1} ∘ d_i */
+    CobMatrix *composed = CobMatrix_compose(d_ip1, d_i);
+    if (composed == NULL)
+      continue;
+    if (!CobMatrix_isZero(composed)) {
+      CobMatrix_free(composed);
+      return false;
     }
-
-    for (int i = 0; i < k->length - 2; ++i) {
-        CobMatrix *d_i = k->differentials[i];
-        CobMatrix *d_ip1 = k->differentials[i + 1];
-
-        if (d_i == NULL || d_ip1 == NULL) {
-            continue;
-        }
-
-        CobMatrix *composed = CobMatrix_compose(d_ip1, d_i);
-        if (composed == NULL) {
-            continue;
-        }
-
-        if (!CobMatrix_isZero(composed)) {
-            CobMatrix_free(composed);
-            return false;
-        }
-
-        CobMatrix_free(composed);
-    }
-
-    return true;
+    CobMatrix_free(composed);
+  }
+  return true;
 }
