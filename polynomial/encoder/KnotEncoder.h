@@ -37,6 +37,8 @@ typedef struct {
 // Create a hard-coded trefoil for quick testing
 Knot* knot_create_trefoil(void);
 
+int knot_count_loops(Knot* knot, int r);
+
 // Free knot
 void knot_free(Knot* k);
 
