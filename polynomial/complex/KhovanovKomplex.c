@@ -104,6 +104,8 @@ KhovanovKomplex* KhovanovKomplex_alloc(Knot* knot) {
         goto alloc_failure;
     }
 
+    kh_complex->columns[h]->numbers[i] = knot_count_loops(knot, r);
+
     /* Count how many states belong to each homological degree */
     for (int r = 0; r < num_states; r++) {
         kh_complex->states_count[pop_count(r)]++;
