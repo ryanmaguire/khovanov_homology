@@ -1,24 +1,37 @@
 #ifndef KHOVANOV_KOMPLEX_H
 #define KHOVANOV_KOMPLEX_H
 
-#include "IntMatrix.h"
+#include <stdbool.h>
 #include "KnotEncoder.h"
-#include "BivariatePoly.h"
+#include "Komplex.h"
 
-// Full Khovanov chain complex using IntMatrix differentials
+/**
+ * @brief Extremely lightweight glue integration layer.
+ *        Directly reuses existing Knot and Komplex pointers
+ *        without introducing any extra ownership or redundant data.
+ */
 typedef struct {
-    int ncolumns;           // homological degrees 0 to m
-    IntMatrix** differentials;  // d_i : C_i → C_{i-1}
-    int startnum;           // overall shift
+    Knot* knot;           /* Source from the topology layer (no ownership) */
+    Komplex* komplex;     /* Arjun's algebraic container (owns the data, responsible for free) */
 } KhovanovKomplex;
 
-// Create complex from knot PD and build full chain + Smith form
-KhovanovKomplex* kh_create_from_knot(Knot* knot);
+/**
+ * @brief Allocate the wrapper layer and initialize the underlying Komplex.
+ * @param knot Pointer to an existing topological knot.
+ */
+KhovanovKomplex* KhovanovKomplex_alloc(Knot* knot);
 
-// Compute Poincaré polynomial (graded Betti numbers)
-BivariatePoly* kh_compute_poincare(KhovanovKomplex* k);
+/**
+ * @brief Safely destroy the wrapper layer.
+ * @note Automatically calls Komplex_free to release the algebraic layer,
+ *       but strictly protects the knot from being freed.
+ */
+void KhovanovKomplex_free(KhovanovKomplex* kh_complex);
 
-// Free everything
-void kh_free(KhovanovKomplex* k);
+/**
+ * @brief Core integration: uses existing parsing and boundary functions
+ *        to inject topological data into Arjun's matrix chain.
+ */
+bool KhovanovKomplex_build(KhovanovKomplex* kh_complex);
 
-#endif
+#endif /* KHOVANOV_KOMPLEX_H */
