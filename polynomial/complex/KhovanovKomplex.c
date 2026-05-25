@@ -1,105 +1,106 @@
-/**
- * KhovanovKomplex.c
- *   It connects:
- *     - KnotEncoder (resolution, loop enumeration, boundary operator)
- *     - CobMatrix and Komplex
- *     - Bivariate Polynomial 
- */
-
 #include "KhovanovKomplex.h"
-#include "KnotEncoder.h"
 #include "CobMatrix.h"
-#include "Komplex.h"
 #include <stdlib.h>
-#include <stdio.h>
 
+/* Reference externally existing topology resolution functions to avoid pulling in unnecessary headers */
+extern SmoothingColumn* resolution_to_smoothing_column(Knot* knot, int r);
+extern CobMatrix* build_boundary_matrix(SmoothingColumn* source, SmoothingColumn* target, int r);
 
-KhovanovKomplex* kh_create(int length) {
-    KhovanovKomplex* k = malloc(sizeof(KhovanovKomplex));
-    k->komplex = Komplex_create(length);
-    k->length = length;
-    return k;
-}
+/* Free function used inside KnotEncoder.c */
+extern void Cap_free(Cap* cap);
 
-/*
- Safely frees the entire KhovanovKomplex and its internal Komplex.
- */
-void kh_free(KhovanovKomplex* k) {
-    if (k) {
-        Komplex_free(k->komplex);
-        free(k);
-    }
-}
-
-/**
- * kh_compute_from_knot
- *   Steps:
- *     1. Create Komplex (2^m columns)
- *     2. For every pair of consecutive resolutions, build the boundary matrix
- *     3. Store each boundary matrix into komplex->differentials
- *     4. Call blockReductionLemma for algebraic simplification
- *     5. Compute the graded Euler characteristic (current approximation)
-*/
-BivariatePoly* kh_compute_from_knot(Knot* knot)
-{
-    if (!knot || knot->m == 0) {
-        BivariatePoly* zero = bp_create();
-        return zero;
+KhovanovKomplex* KhovanovKomplex_alloc(Knot* knot) {
+    if (!knot || knot->m <= 0) {
+        return NULL;
     }
 
+    KhovanovKomplex* kh_complex = (KhovanovKomplex*)malloc(sizeof(KhovanovKomplex));
+    if (!kh_complex) {
+        return NULL;
+    }
+
+    kh_complex->knot = knot;
+   
+    /* According to current logic, total number of composite states is 2^m */
+    int num_states = 1 << knot->m;
+   
+    /* Call Arjun's existing chain complex constructor */
+    kh_complex->komplex = Komplex_create(num_states);
+    if (!kh_complex->komplex) {
+        free(kh_complex);
+        return NULL;
+    }
+    return kh_complex;
+}
+
+void KhovanovKomplex_free(KhovanovKomplex* kh_complex) {
+    if (!kh_complex) {
+        return;
+    }
+   
+    /* Ownership transfer: directly call Arjun's safe release interface */
+    if (kh_complex->komplex) {
+        Komplex_free(kh_complex->komplex);
+    }
+   
+    /* Note: Never free kh_complex->knot. Follow the "whoever allocates, releases" principle */
+    free(kh_complex);
+}
+
+bool KhovanovKomplex_build(KhovanovKomplex* kh_complex) {
+    if (!kh_complex || !kh_complex->knot || !kh_complex->komplex) {
+        return false;
+    }
+
+    Knot* knot = kh_complex->knot;
+    Komplex* komplex = kh_complex->komplex;
     int m = knot->m;
-    BivariatePoly* poly = bp_create();
+    int num_states = 1 << m;
 
-    /* Create full chain complex with 2^m columns */
-    Komplex* komplex = Komplex_create(1 << m);
-
-    /* Build all consecutive boundary matrices (differentials) */
-    for (int r = 0; r < (1 << m) - 1; r++) {
-        /* Generate SmoothingColumn for current resolution */
+    /* Core assembly logic: fully reuse the loop previously validated in compute_khovanov_polynomial */
+    for (int r = 0; r < num_states - 1; r++) {
+       
+        /* 1. Fetch topology columns and convert to your SmoothingColumn structures */
         SmoothingColumn* source = resolution_to_smoothing_column(knot, r);
-
-        /* Generate SmoothingColumn for next resolution */
         SmoothingColumn* target = resolution_to_smoothing_column(knot, r + 1);
 
-        /* Build the boundary operator ∂ between them */
-        CobMatrix* boundary = build_boundary_matrix(source, target, r);
+        if (!source || !target) {
+            /* Defensive memory cleanup */
+            if (source) {
+                for (int i = 0; i < source->n; i++) Cap_free(source->smoothings[i]);
+                free(source->smoothings); free(source->numbers); free(source);
+            }
+            if (target) {
+                for (int i = 0; i < target->n; i++) Cap_free(target->smoothings[i]);
+                free(target->smoothings); free(target->numbers); free(target);
+            }
+            continue;
+        }
 
-        /* Store the boundary matrix into Komplex */
+        /* 2. Dispatch your existing function to generate the matrix.
+           The Jordan-Wigner signs for the hypercube are already handled inside build_boundary_matrix */
+        CobMatrix* boundary = build_boundary_matrix(source, target, r);
+       
+        /* 3. Mount the matrix directly onto Arjun's Komplex */
         komplex->differentials[r] = boundary;
 
-        /* Perform block reduction using  algorithm */
-        Komplex_blockReductionLemma(komplex, r, 0, 0);
-
-        /* Cleanup temporary SmoothingColumn objects */
-        for (int i = 0; i < source->n; i++) Cap_free(source->smoothings[i]);
+        /* 4. Clean up temporary SmoothingColumn objects.
+           Because build_boundary_matrix internally uses CobMatrix_create(..., false),
+           it clones the matrix, so the original pointers here must be safely released. */
+        for (int i = 0; i < source->n; i++) {
+            if (source->smoothings[i]) Cap_free(source->smoothings[i]);
+        }
         free(source->smoothings);
         free(source->numbers);
         free(source);
 
-        for (int i = 0; i < target->n; i++) Cap_free(target->smoothings[i]);
+        for (int i = 0; i < target->n; i++) {
+            if (target->smoothings[i]) Cap_free(target->smoothings[i]);
+        }
         free(target->smoothings);
         free(target->numbers);
         free(target);
     }
 
-    /* For now we compute the graded Euler characteristic as a fast but correct result */
-    for (int r = 0; r < (1 << m); r++) {
-        int hom_deg = pop_count(r);                    /* homological degree i = |r| */
-
-        /* Use real loop count from the paper's algorithm */
-        int loop_min[2 * m];
-        int num_loops = count_loops_and_min_labels(knot->pd, m, r, loop_min);
-
-        int quantum_deg = knot->writhe + hom_deg - 2 * num_loops;
-
-        /* Simple sign for Euler characteristic */
-        int sign = (pop_count(r) % 2 == 0) ? 1 : -1;
-
-        bp_add_term(poly, quantum_deg, hom_deg, sign);
-    }
-
-    /* Cleanup the full Komplex */
-    Komplex_free(komplex);
-
-    return poly;
+    return true;
 }
