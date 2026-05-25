@@ -1,5 +1,6 @@
 #ifndef BIVARIATE_POLY_H
 #define BIVARIATE_POLY_H
+#include <stdbool.h>
 
 typedef struct {
     int q_exp; // quantum degree
@@ -22,5 +23,5 @@ BivariatePoly* bp_add(const BivariatePoly* p1, const BivariatePoly* p2);
 BivariatePoly* bp_multiply(const BivariatePoly* p1, const BivariatePoly* p2);
 void bp_print(const BivariatePoly* p);
 char* bp_to_string(const BivariatePoly* p);
-
+bool bp_is_zero(const BivariatePoly* p);
 #endif

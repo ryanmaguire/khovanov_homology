@@ -16,6 +16,9 @@ void bp_free(BivariatePoly* p) {
         free(p);
     }
 }
+bool bp_is_zero(const BivariatePoly* p) {
+    return p == NULL || p->num_terms == 0;
+}
 // add term, merge like terms
 static void bp_add_term(BivariatePoly* p, int q, int t, int c) {
     if (c == 0) return;

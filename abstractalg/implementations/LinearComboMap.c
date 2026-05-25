@@ -2,11 +2,6 @@
 #include "LinearComboMap.h"
 #include <stdlib.h>
 #include <string.h>
-
-static bool bp_is_zero(const BivariatePoly* p) {
-    return p == NULL || p->num_terms == 0;
-}
-
 static BivariatePoly* clone_poly(const BivariatePoly* p) {
     if (!p) return NULL;
     BivariatePoly* copy = bp_create();
@@ -53,7 +48,7 @@ void LinearComboMap_putOrAdd(LinearComboMap* map, Morphism* m, BivariatePoly* co
     AbstractLinearCombo* combo = map->combo;
     
     for (int i = 0; i < combo->term_count; i++) {
-        if (combo->elements[i].term == m) {
+        if (Morphism_equals(combo->elements[i].term, m)) {
             
             //morphism found, so we add the polynomials together
             BivariatePoly* old_coeff = combo->elements[i].coeff;
@@ -72,8 +67,7 @@ void LinearComboMap_putOrAdd(LinearComboMap* map, Morphism* m, BivariatePoly* co
             }
 
             combo->elements[i].coeff = new_coeff;
-            
-            return;//we are done
+            return; 
         }
     }
     

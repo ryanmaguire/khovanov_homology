@@ -1,8 +1,8 @@
 #include "AbstractLinearCombo.h"
+#include "../Morphism.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
 typedef struct {
     char* str;
     size_t length;
@@ -96,7 +96,40 @@ AbstractLinearCombo* AbstractLinearCombo_create(int initial_capacity) {
 }
 
 void AbstractLinearCombo_addTerm(AbstractLinearCombo* self, Morphism* term, BivariatePoly* coeff) {
-    if (!self) return;
+    if (!self || !term || !coeff) return;
+    
+    if (bp_is_zero(coeff)) {
+        bp_free(coeff);
+        return;
+    }
+
+    for (int i = 0; i < self->term_count; i++) {
+        if (Morphism_equals(self->elements[i].term, term)) {
+            
+            BivariatePoly* old_coeff = self->elements[i].coeff;
+            BivariatePoly* new_coeff = bp_add(old_coeff, coeff);
+            
+            bp_free(old_coeff);
+            bp_free(coeff); 
+
+            if (bp_is_zero(new_coeff)) {
+                bp_free(new_coeff);
+                
+                self->term_count--;
+                if (i < self->term_count) {
+                    self->elements[i] = self->elements[self->term_count];
+                }
+                
+                self->elements[self->term_count].term = NULL;
+                self->elements[self->term_count].coeff = NULL;
+            } else {
+                self->elements[i].coeff = new_coeff;
+            }
+            
+            return; 
+        }
+    }
+    
     if (self->term_count >= self->capacity) {
         self->capacity = (self->capacity == 0) ? 4 : self->capacity * 2;
         TermPair* new_elements = (TermPair*)realloc(self->elements, self->capacity * sizeof(TermPair));
