@@ -14,14 +14,9 @@
  *      gcc -Wall -Wextra -g -c Komplex.c -I.
  */
 #include "Komplex.h"
+#include "LCCC.h"
 #include <stdlib.h>
 #include <stdio.h>
-/* ================================================================
- *  Forward declarations for LCCC operations.
- *  These are provided by LCCC.c (or stub implementations in tests).
- * ================================================================ */
-extern LCCC *LCCC_invert(LCCC *lc);
-extern LCCC *LCCC_negate(LCCC *lc);
 /* ================================================================
  *  Construction / Destruction
  * ================================================================ */
@@ -74,6 +69,21 @@ void Komplex_free(Komplex *k) {
  *  - d_{chain_idx+1} loses its column corresponding to target_row
  *    (since target_row is a source index in d_{chain_idx+1})
  * ================================================================ */
+/* Forward declaration for isIsomorphism. Over F_2, we can just check if
+   it evaluates to a single CannedCobordism that is an isomorphism. 
+   We assume LCCC_isIsomorphism is available or we check it manually. */
+static bool is_isomorphism(LCCC *lc) {
+  if (lc == NULL || LCCC_isZero(lc)) return false;
+  /* An LCCC over F_2 is an isomorphism if it has exactly one term
+     and that term is an isomorphism. */
+  if (lc->head != NULL && lc->head->next == NULL) {
+    CannedCobordism *cc = lc->head->cobordism;
+    if (cc != NULL && cc->isIsomorphism != NULL) {
+      return cc->isIsomorphism(cc);
+    }
+  }
+  return false;
+}
 bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
                                  int target_row) {
   if (chain_idx < 0 || chain_idx >= k->length - 1)
@@ -99,7 +109,7 @@ bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
     }
   }
   /* The oracle guarantees this is an isomorphism, but verify */
-  if (phi == NULL || LCCC_isZero(phi))
+  if (!is_isomorphism(phi))
     return false;
   /* ---- Step 2: Compute φ⁻¹ ---- */
   LCCC *phi_inv = LCCC_invert(phi);
@@ -212,21 +222,6 @@ int Komplex_reduce_with_oracle(Komplex *k, const CollapseSchedule *schedule) {
 /* ================================================================
  *  Greedy Algebraic Reduction
  * ================================================================ */
-/* Forward declaration for isIsomorphism. Over F_2, we can just check if
-   it evaluates to a single CannedCobordism that is an isomorphism. 
-   We assume LCCC_isIsomorphism is available or we check it manually. */
-static bool is_isomorphism(LCCC *lc) {
-  if (lc == NULL || LCCC_isZero(lc)) return false;
-  /* An LCCC over F_2 is an isomorphism if it has exactly one term
-     and that term is an isomorphism. */
-  if (lc->head != NULL && lc->head->next == NULL) {
-    CannedCobordism *cc = lc->head->cobordism;
-    if (cc != NULL && cc->isIsomorphism != NULL) {
-      return cc->isIsomorphism(cc);
-    }
-  }
-  return false;
-}
 int Komplex_greedyReduce(Komplex *k) {
   int reductions = 0;
   bool reduced;
