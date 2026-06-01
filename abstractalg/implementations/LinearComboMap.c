@@ -26,6 +26,11 @@ LinearComboMap* LinearComboMap_create(int initial_capacity) {
     if (!map) return NULL;
     
     map->combo = AbstractLinearCombo_create(initial_capacity);
+    //abort and clean up if the combo failed to allocate
+    if (!map->combo) {
+        free(map);
+        return NULL;
+    }
     return map;
 }
 

@@ -1,6 +1,8 @@
 #ifndef DIRECTSUM_H
 #define DIRECTSUM_H
 
+#include <stdbool.h>
+
 //Purpose: A container representing a mathematical direct sum
 //Method: Wraps a dynamic array of pointers to algebraic objects
 typedef struct {
@@ -10,15 +12,14 @@ typedef struct {
 } DirectSum;
 
 //Purpose: Initialize a DirectSum container
-//Arguments: ds
-//Argument descriptions: ds is a pointer to the DirectSum to initialize
-//Output type: void
-void DirectSum_init(DirectSum* ds);
+//Returns: true if memory allocation succeeded, false otherwise
+bool DirectSum_init(DirectSum* ds);
 
 //Purpose: Add an object to the direct sum
-//Arguments: ds, element
-//Argument descriptions: ds is the container, element is the pointer to the object
-//Output type: void
-void DirectSum_add(DirectSum* ds, void* element);
+//Returns: true if successful, false if memory reallocation failed
+bool DirectSum_add(DirectSum* ds, void* element);
+
+//Purpose: Frees the dynamically allocated array to prevent memory leaks
+void DirectSum_free(DirectSum* ds);
 
 #endif
