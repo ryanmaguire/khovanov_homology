@@ -1,11 +1,12 @@
 #ifndef KNOT_ENCODER_H
 #define KNOT_ENCODER_H
 
-#include "BivariatePoly.h"
-#include "IntMatrix.h"
+#include "../polynomial/BivariatePoly.h"
 
 // Simple knot representation: 4m-tuple of edge labels
 typedef struct {
+    int** pd;       // Planar Diagram codes (a 2D array of crossings)
+    int writhe;     // The writhe of the knot
     int* edges;     // 4m edge labels
     int m;          // number of crossings
 } Knot;
@@ -36,6 +37,8 @@ typedef struct {
 
 // Create a hard-coded trefoil for quick testing
 Knot* knot_create_trefoil(void);
+// Helper to create knot from PD code
+Knot* knot_from_pd(int pd[][4], int m);
 
 int knot_count_loops(Knot* knot, int r);
 
