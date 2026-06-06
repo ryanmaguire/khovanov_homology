@@ -1,5 +1,5 @@
-#include "IntMatrix.h"
-
+#include "IntegerMatrix.h"
+#include <stdio.h>
 /* * Allocates memory for the matrix structure and its internal 2D grid.
  * Initializes tracking pointers and links to NULL.
  */
@@ -137,7 +137,7 @@ void multRow2(Mat* m, int a, int64_t n) {
 }
 
 /* Low-level operation: Multiplies a column by a scalar factor */
-void multColumn2(Mat* m, int a, int n) {
+void multColumn2(Mat* m, int a, int64_t n) {
     for (int i = 0; i < m->rows; i++) {
         m->matrix[i][a] *= n;
     }
@@ -305,7 +305,7 @@ void toSmithForm(Mat* m) {
 void printMat(Mat* m) {
     for (int i = 0; i < m->rows; i++) {
         for (int j = 0; j < m->cols; j++) {
-            printf("%5lld", m->matrix[i][j]); 
+            printf("%5lld", (long long)m->matrix[i][j]); 
         }
         printf("\n");
     }
