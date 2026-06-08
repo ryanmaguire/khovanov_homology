@@ -94,6 +94,15 @@ char* bp_to_string(const BivariatePoly* p) {
     if (!buffer) return NULL;
     size_t pos = 0;
 
+    #define SAFE_APPEND(...) do { \
+        int written = snprintf(buffer + pos, buf_size - pos, __VA_ARGS__); \
+        if (written < 0 || (size_t)written >= buf_size - pos) { \
+            buffer[buf_size - 1] = '\0'; \
+            goto done; \
+        } \
+        pos += (size_t)written; \
+    } while(0)
+    
     for (int i = 0; i < p->num_terms; i++) {
         int coeff = p->terms[i].coeff;
         if (coeff == 0) continue;
@@ -128,6 +137,9 @@ char* bp_to_string(const BivariatePoly* p) {
         }
     }
 
+    done:
+    #undef SAFE_APPEND
+    
     if (pos == 0) {
         buffer[0] = '0';
         buffer[1] = '\0';
