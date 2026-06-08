@@ -17,6 +17,7 @@ typedef struct {
 BivariatePoly* bp_create(void);
 // free memory
 void bp_free(BivariatePoly* p);
+void bp_add_term(BivariatePoly* p, int q, int t, int c);
 // add 
 BivariatePoly* bp_add(const BivariatePoly* p1, const BivariatePoly* p2);
 // multiply

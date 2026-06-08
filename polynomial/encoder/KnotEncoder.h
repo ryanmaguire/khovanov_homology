@@ -3,49 +3,49 @@
 
 #include "../polynomial/BivariatePoly.h"
 
-// Simple knot representation: 4m-tuple of edge labels
+//knot representation: 4m-tuple of edge labels
 typedef struct {
-    int** pd;       // Planar Diagram codes (a 2D array of crossings)
-    int writhe;     // The writhe of the knot
-    int* edges;     // 4m edge labels
-    int m;          // number of crossings
+    int** pd;       //planar Diagram codes (a 2D array of crossings)
+    int writhe;     //the writhe of the knot
+    int* edges;     //4m edge labels
+    int m;          //number of crossings
 } Knot;
 
-// Resolution register |r> (m bits)
+//resolution register |r> (m bits)
 typedef struct {
-    int* r;         // resolution bits (0 or 1)
+    int* r;         //resolution bits (0 or 1)
     int m;
 } Resolution;
 
-// Resolved knot register |K_r>
+//resolved knot register |K_r>
 typedef struct {
-    int* resolved_edges;   // reordered edge pairs after smoothing
+    int* resolved_edges;   //reordered edge pairs after smoothing
     int m;
 } ResolvedKnot;
 
-// Loop enumeration register |L_r>
+//loop enumeration register |L_r>
 typedef struct {
-    int* loop_min_labels;  // minimal edge label for each loop
+    int* loop_min_labels;  //minimal edge label for each loop
     int num_loops;
 } LoopRegister;
 
-// Enhanced state |s> (labels on loops: 0=1, 1=X)
+//enhanced state |s> (labels on loops: 0=1, 1=X)
 typedef struct {
-    int* s;         // 0 or 1 for each loop
+    int* s;         //0 or 1 for each loop
     int num_loops;
 } EnhancedState;
 
-// Create a hard-coded trefoil for quick testing
+//we hard code a trefoil for quick testing
 Knot* knot_create_trefoil(void);
-// Helper to create knot from PD code
+//helper to create knot from PD code
 Knot* knot_from_pd(int pd[][4], int m);
 
 int knot_count_loops(Knot* knot, int r);
 
-// Free knot
+//free knot
 void knot_free(Knot* k);
 
-// Build full chain complex and compute Khovanov polynomial
+//build full chain complex and compute Khovanov polynomial
 BivariatePoly* compute_khovanov_polynomial(Knot* knot);
 
 #endif

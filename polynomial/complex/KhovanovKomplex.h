@@ -2,8 +2,8 @@
 #define KHOVANOV_KOMPLEX_H
 
 #include <stdbool.h>
-#include "KnotEncoder.h"
-#include "Komplex.h"
+#include "../encoder/KnotEncoder.h"
+#include "../../topology/Komplex.h"
 
 /**
  * @struct KhovanovKomplex

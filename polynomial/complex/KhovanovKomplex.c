@@ -1,6 +1,6 @@
 #include "KhovanovKomplex.h"
-#include "CobMatrix.h"
-#include "CannedCobordismImpl.h" /* Required for CannedCobordismImpl_create and casting */
+#include "../../topology/CobMatrix.h"
+#include "../../topology/CannedCobordismImpl.h"
 #include <stdlib.h>
 #include <stdio.h>
 
@@ -97,21 +97,19 @@ KhovanovKomplex* KhovanovKomplex_alloc(Knot* knot) {
 
     /* --- Pre-compute Combinatorics --- */
     kh_complex->states_count = (int*)calloc(m + 1, sizeof(int));
-    kh_complex->states_by_h = (int**)calloc(m + 1, sizeof(int*)); /* Crucial: use calloc for safe freeing */
+    kh_complex->states_by_h = (int**)calloc(m + 1, sizeof(int*)); 
     kh_complex->columns = (SmoothingColumn**)calloc(m + 1, sizeof(SmoothingColumn*));
 
     if (!kh_complex->states_count || !kh_complex->states_by_h || !kh_complex->columns) {
         goto alloc_failure;
     }
 
-    kh_complex->columns[h]->numbers[i] = knot_count_loops(knot, r);
-
-    /* Count how many states belong to each homological degree */
+    //count how many states belong to each homological degre
     for (int r = 0; r < num_states; r++) {
         kh_complex->states_count[pop_count(r)]++;
     }
 
-    /* Allocate sub-arrays and distribute the resolution bitmasks (r) into their respective degree buckets */
+    
     int* current_idx = (int*)calloc(m + 1, sizeof(int));
     if (!current_idx) goto alloc_failure;
 
@@ -131,7 +129,7 @@ KhovanovKomplex* KhovanovKomplex_alloc(Knot* knot) {
     }
     free(current_idx);
 
-    /* --- Pre-compute all SmoothingColumns (Topology Caching) --- */
+    //precomputation
     for (int h = 0; h <= m; h++) {
         kh_complex->columns[h] = (SmoothingColumn*)malloc(sizeof(SmoothingColumn));
         if (!kh_complex->columns[h]) goto alloc_failure;
@@ -143,7 +141,11 @@ KhovanovKomplex* KhovanovKomplex_alloc(Knot* knot) {
         if (!kh_complex->columns[h]->numbers || !kh_complex->columns[h]->smoothings) goto alloc_failure;
 
         for (int i = 0; i < kh_complex->columns[h]->n; i++) {
-            kh_complex->columns[h]->smoothings[i] = build_resolution_cap(knot, kh_complex->states_by_h[h][i]);
+            //build cap 
+            int r = kh_complex->states_by_h[h][i];
+            kh_complex->columns[h]->smoothings[i] = build_resolution_cap(knot, r);
+            kh_complex->columns[h]->numbers[i] = knot_count_loops(knot, r); 
+            
             if (!kh_complex->columns[h]->smoothings[i]) goto alloc_failure;
         }
     }
@@ -151,11 +153,10 @@ KhovanovKomplex* KhovanovKomplex_alloc(Knot* knot) {
     return kh_complex;
 
 alloc_failure:
-    /* Elegant degradation: cleanly free everything if any malloc fails */
+    //free if malloc doesnt work
     KhovanovKomplex_free(kh_complex);
     return NULL;
 }
-
 void KhovanovKomplex_free(KhovanovKomplex* kh_complex) {
     if (!kh_complex) return;
     
