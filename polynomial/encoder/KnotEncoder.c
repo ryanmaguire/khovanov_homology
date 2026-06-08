@@ -44,8 +44,8 @@ int knot_count_loops(Knot* knot, int r) {
     if (!knot || knot->m <= 0) return 0;
 
     int max_edges = 4 * knot->m + 10;
-    int parent[200];
-    int active[200];
+    int parent[max_edges];
+    int active[max_edges];
 
     for (int i = 0; i < max_edges; i++) {
         parent[i] = i;
