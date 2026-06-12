@@ -58,21 +58,21 @@ typedef struct CannedCobordismImplData {
   Cap *top;
   Cap *bottom;
 
-  int8_t nbc;
+  int nbc;
   int offtop;
   int offbot;
-  int8_t *component;
+  int *component;
 
-  int8_t ncc;
-  int8_t *connectedComponent;
-  int8_t *dots;
-  int8_t *genus;
+  int ncc;
+  int *connectedComponent;
+  int *dots;
+  int *genus;
 
   int *bc_sizes;
-  int8_t **boundaryComponents;
+  int **boundaryComponents;
 
   int *edge_sizes;
-  int8_t **edges;
+  int **edges;
 
   bool reverse_maps_done;
 

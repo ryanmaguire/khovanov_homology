@@ -18,7 +18,7 @@
 
 #define ZEROSIZE 127
 
-static int8_t zero_buf[ZEROSIZE]; /* all zeros, shared */
+static int zero_buf[ZEROSIZE]; /* all zeros, shared */
 
 /* ================================================================
  *  Vtable dispatch functions (static)
@@ -102,42 +102,35 @@ CannedCobordismImplData *CannedCobordismImpl_create(Cap *top, Cap *bottom) {
   assert(top->n == bottom->n);
   int n = top->n;
 
-  /* 
-   * Pre-calculate the maximum footprint for the flat block.
-   * Includes the main struct, the component array, and the connectedComponent array.
-   * nbc_max is bounded by the number of edges plus cycles.
-   */
   int nbc_max = n + top->ncycles + bottom->ncycles + 2;
   size_t footprint = sizeof(CannedCobordismImplData) +
-                     (size_t)n * sizeof(int8_t) +
-                     (size_t)nbc_max * sizeof(int8_t);
+                     (size_t)n * sizeof(int) +
+                     (size_t)nbc_max * sizeof(int);
 
-  /* Allocate the entire block at once for cache locality and minimal heap churn */
   char *mem_block = (char *)calloc(1, footprint);
   CannedCobordismImplData *d = (CannedCobordismImplData *)mem_block;
   mem_block += sizeof(CannedCobordismImplData);
 
-  /* Offset internal pointers into the flat block */
-  d->component = (int8_t *)mem_block;
-  mem_block += (size_t)n * sizeof(int8_t);
+  d->component = (int *)mem_block;
+  mem_block += (size_t)n * sizeof(int);
 
-  d->connectedComponent = (int8_t *)mem_block;
+  d->connectedComponent = (int *)mem_block;
 
   d->n = n;
   d->hpower = 0;
   d->top = top;
   d->bottom = bottom;
 
-  memset(d->component, -1, (size_t)n * sizeof(int8_t));
+  memset(d->component, -1, (size_t)n * sizeof(int));
 
   d->nbc = 0;
   for (int i = 0; i < n; i++) {
     if (d->component[i] == -1) {
       int j = i;
       do {
-        d->component[j] = (int8_t)d->nbc;
+        d->component[j] = d->nbc;
         j = top->pairings[j];
-        d->component[j] = (int8_t)d->nbc;
+        d->component[j] = d->nbc;
         j = bottom->pairings[j];
       } while (j != i);
       d->nbc++;
@@ -145,9 +138,9 @@ CannedCobordismImplData *CannedCobordismImpl_create(Cap *top, Cap *bottom) {
   }
 
   d->offtop = d->nbc;
-  d->nbc += (int8_t)top->ncycles;
+  d->nbc += top->ncycles;
   d->offbot = d->nbc;
-  d->nbc += (int8_t)bottom->ncycles;
+  d->nbc += bottom->ncycles;
 
   d->dots = NULL;
   d->genus = NULL;
@@ -227,17 +220,17 @@ void CannedCobordismImpl_reverseMaps(CannedCobordismImplData *impl) {
     numBC[impl->connectedComponent[i]]++;
 
   impl->boundaryComponents =
-      (int8_t **)malloc((size_t)impl->ncc * sizeof(int8_t *));
+      (int **)malloc((size_t)impl->ncc * sizeof(int *));
   impl->bc_sizes = (int *)malloc((size_t)impl->ncc * sizeof(int));
   for (int i = 0; i < impl->ncc; i++) {
     impl->bc_sizes[i] = numBC[i];
     impl->boundaryComponents[i] =
-        (int8_t *)malloc((size_t)numBC[i] * sizeof(int8_t));
+        (int *)malloc((size_t)numBC[i] * sizeof(int));
   }
 
   int j[impl->ncc];
   memset(j, 0, (size_t)impl->ncc * sizeof(int));
-  for (int8_t i = 0; i < impl->nbc; i++) {
+  for (int i = 0; i < impl->nbc; i++) {
     int k = impl->connectedComponent[i];
     impl->boundaryComponents[k][j[k]++] = i;
   }
@@ -248,18 +241,18 @@ void CannedCobordismImpl_reverseMaps(CannedCobordismImplData *impl) {
   for (int i = 0; i < impl->n; i++)
     nedges[impl->component[i]]++;
 
-  impl->edges = (int8_t **)malloc((size_t)impl->offtop * sizeof(int8_t *));
+  impl->edges = (int **)malloc((size_t)impl->offtop * sizeof(int *));
   impl->edge_sizes = (int *)malloc((size_t)impl->offtop * sizeof(int));
   for (int i = 0; i < impl->offtop; i++) {
     impl->edge_sizes[i] = nedges[i];
-    impl->edges[i] = (int8_t *)malloc((size_t)nedges[i] * sizeof(int8_t));
+    impl->edges[i] = (int *)malloc((size_t)nedges[i] * sizeof(int));
   }
 
   int j_edges[impl->offtop];
   memset(j_edges, 0, (size_t)impl->offtop * sizeof(int));
   for (int i = 0; i < impl->n; i++) {
     int k = impl->component[i];
-    impl->edges[k][j_edges[k]++] = (int8_t)i;
+    impl->edges[k][j_edges[k]++] = (int)i;
   }
 
   impl->reverse_maps_done = true;
@@ -313,7 +306,7 @@ bool CannedCobordismImpl_equals(const CannedCobordismImplData *a,
 /* ================================================================
  *  CannedCobordismImpl_hashCode
  * ================================================================ */
-static int arrays_hashCode_i8(const int8_t *arr, int len) {
+static int arrays_hashCode_i8(const int *arr, int len) {
   int r = 1;
   for (int i = 0; i < len; i++)
     r = 31 * r + arr[i];
@@ -406,7 +399,7 @@ CannedCobordism *CannedCobordismImpl_isomorphism(Cap *c) {
   
   /* Paths: connectedComponent[i] = i */
   for (int i = 0; i < d->offtop; i++) {
-    d->connectedComponent[i] = (int8_t)i;
+    d->connectedComponent[i] = (int)i;
   }
   
   /* Cycles: top cycle i and bottom cycle i are part of the same connected component.
@@ -414,12 +407,12 @@ CannedCobordism *CannedCobordismImpl_isomorphism(Cap *c) {
      Bottom cycles are at [offbot ... offbot + ncycles - 1] 
      Wait, offbot = offtop + top->ncycles. */
   for (int i = 0; i < c->ncycles; i++) {
-    d->connectedComponent[d->offtop + i] = (int8_t)(d->offtop + i);
-    d->connectedComponent[d->offbot + i] = (int8_t)(d->offtop + i);
+    d->connectedComponent[d->offtop + i] = (int)(d->offtop + i);
+    d->connectedComponent[d->offbot + i] = (int)(d->offtop + i);
   }
 
-  d->dots = (int8_t *)calloc((size_t)d->ncc, sizeof(int8_t));
-  d->genus = (int8_t *)calloc((size_t)d->ncc, sizeof(int8_t));
+  d->dots = (int *)calloc((size_t)d->ncc, sizeof(int));
+  d->genus = (int *)calloc((size_t)d->ncc, sizeof(int));
 
   return CannedCobordismImpl_as_CannedCobordism(d);
 }
@@ -445,11 +438,11 @@ CannedCobordism *CannedCobordismImpl_isomorphism(Cap *c) {
  *  Method:
  *      Linear scan of both arrays.
  * ================================================================ */
-static void merge_labels(int8_t *ret_cc, int ret_nbc, int *midConComp,
+static void merge_labels(int *ret_cc, int ret_nbc, int *midConComp,
                          int mid_len, int old_val, int new_val) {
   for (int i = 0; i < ret_nbc; i++)
     if (ret_cc[i] == old_val)
-      ret_cc[i] = (int8_t)new_val;
+      ret_cc[i] = (int)new_val;
   for (int i = 0; i < mid_len; i++)
     if (midConComp[i] == old_val)
       midConComp[i] = new_val;
@@ -492,7 +485,7 @@ CannedCobordismImpl_compose_vertical(CannedCobordismImplData *this_d,
       CannedCobordismImpl_create(cc_d->top, this_d->bottom);
   ret->hpower = this_d->hpower + cc_d->hpower;
 
-  for (int8_t i = 0; i < ret->nbc; i++)
+  for (int i = 0; i < ret->nbc; i++)
     ret->connectedComponent[i] = i;
 
   /* 
@@ -506,13 +499,13 @@ CannedCobordismImpl_compose_vertical(CannedCobordismImplData *this_d,
     midConComp[i] = -2 - i;
 
   int alloc = this_d->ncc + cc_d->ncc + ret->nbc + 4;
-  int8_t rdots[alloc];
+  int rdots[alloc];
   memset(rdots, 0, alloc);
-  int8_t mdots[alloc];
+  int mdots[alloc];
   memset(mdots, 0, alloc);
-  int8_t udots[alloc];
+  int udots[alloc];
   memset(udots, 0, alloc);
-  int8_t ugenus[alloc];
+  int ugenus[alloc];
   memset(ugenus, 0, alloc);
   int unconnected = 0;
 
@@ -563,7 +556,7 @@ CannedCobordismImpl_compose_vertical(CannedCobordismImplData *this_d,
           if (mtest >= 0)
             for (int k2 = 0; k2 < ret->nbc; k2++)
               if (ret->connectedComponent[k2] == mtest)
-                ret->connectedComponent[k2] = (int8_t)reti;
+                ret->connectedComponent[k2] = (int)reti;
           for (int k2 = 0; k2 < mid_len; k2++)
             if (midConComp[k2] == mtest)
               midConComp[k2] = reti;
@@ -644,7 +637,7 @@ CannedCobordismImpl_compose_vertical(CannedCobordismImplData *this_d,
           if (mtest >= 0)
             for (int k2 = 0; k2 < ret->nbc; k2++)
               if (ret->connectedComponent[k2] == mtest)
-                ret->connectedComponent[k2] = (int8_t)reti;
+                ret->connectedComponent[k2] = (int)reti;
           for (int k2 = 0; k2 < mid_len; k2++)
             if (midConComp[k2] == mtest)
               midConComp[k2] = reti;
@@ -668,7 +661,7 @@ CannedCobordismImpl_compose_vertical(CannedCobordismImplData *this_d,
   ret->ncc = 0;
   for (int i = 0; i < ret->nbc; i++) {
     if (ret->connectedComponent[i] > ret->ncc) {
-      int8_t j = ret->connectedComponent[i];
+      int j = ret->connectedComponent[i];
       for (int k = i; k < ret->nbc; k++) {
         if (ret->connectedComponent[k] == j)
           ret->connectedComponent[k] = ret->ncc;
@@ -681,7 +674,7 @@ CannedCobordismImpl_compose_vertical(CannedCobordismImplData *this_d,
         else if (midConComp[k] == ret->ncc)
           midConComp[k] = j;
       }
-      int8_t tmp = rdots[ret->ncc];
+      int tmp = rdots[ret->ncc];
       rdots[ret->ncc] = rdots[j];
       rdots[j] = tmp;
       ret->ncc++;
@@ -691,7 +684,7 @@ CannedCobordismImpl_compose_vertical(CannedCobordismImplData *this_d,
 
   /* --- Genus calculation via Euler characteristic --- */
   CannedCobordismImpl_reverseMaps(ret);
-  int8_t rgenus[ret->ncc + 1];
+  int rgenus[ret->ncc + 1];
   memset(rgenus, 0, ret->ncc + 1);
 
   for (int i = 0; i < ret->ncc; i++) {
@@ -758,7 +751,7 @@ CannedCobordismImpl_compose_vertical(CannedCobordismImplData *this_d,
     }
     int g = 2 - b - x;
     assert(g % 2 == 0 && g >= 0);
-    rgenus[i] = (int8_t)(g / 2);
+    rgenus[i] = (int)(g / 2);
   }
 
   /* Handle middle cycles that became unconnected */
@@ -785,18 +778,18 @@ CannedCobordismImpl_compose_vertical(CannedCobordismImplData *this_d,
               g += cc_d->genus[j] - 1;
               break;
             }
-      ugenus[unconnected] = (int8_t)g;
+      ugenus[unconnected] = (int)g;
       udots[unconnected++] = mdots[i];
     }
   }
 
   /* --- Finalize dots and genus arrays --- */
   int rncc = ret->ncc;
-  ret->ncc += (int8_t)unconnected;
-  ret->dots = (int8_t *)malloc((size_t)ret->ncc * sizeof(int8_t));
+  ret->ncc += (int)unconnected;
+  ret->dots = (int *)malloc((size_t)ret->ncc * sizeof(int));
   memcpy(ret->dots, rdots, (size_t)rncc);
   memcpy(ret->dots + rncc, udots, (size_t)unconnected);
-  ret->genus = (int8_t *)malloc((size_t)ret->ncc * sizeof(int8_t));
+  ret->genus = (int *)malloc((size_t)ret->ncc * sizeof(int));
   memcpy(ret->genus, rgenus, (size_t)rncc);
   memcpy(ret->genus + rncc, ugenus, (size_t)unconnected);
 
@@ -868,7 +861,7 @@ CannedCobordismImpl_compose_horizontal(CannedCobordismImplData *this_d,
   CannedCobordismImplData *ret = CannedCobordismImpl_create(rtop, rbot);
   ret->hpower = this_d->hpower + cc_d->hpower;
 
-  for (int8_t i = 0; i < ret->nbc; i++)
+  for (int i = 0; i < ret->nbc; i++)
     ret->connectedComponent[i] = i;
 
   /* 
@@ -880,13 +873,13 @@ CannedCobordismImpl_compose_horizontal(CannedCobordismImplData *this_d,
     midConComp[i] = -2 - i;
 
   int alloc = this_d->ncc + cc_d->ncc + ret->nbc + nc + 4;
-  int8_t rdots[alloc];
+  int rdots[alloc];
   memset(rdots, 0, alloc);
-  int8_t mdots[alloc];
+  int mdots[alloc];
   memset(mdots, 0, alloc);
-  int8_t udots[alloc];
+  int udots[alloc];
   memset(udots, 0, alloc);
-  int8_t ugenus[alloc];
+  int ugenus[alloc];
   memset(ugenus, 0, alloc);
   int unconnected = 0;
 
@@ -1078,7 +1071,7 @@ CannedCobordismImpl_compose_horizontal(CannedCobordismImplData *this_d,
         if (midConComp[j] >= 0)
           ret->connectedComponent[reti] = midConComp[j];
         else {
-          ret->connectedComponent[reti] = (int8_t)(ret->nbc - midConComp[j]);
+          ret->connectedComponent[reti] = (int)(ret->nbc - midConComp[j]);
           rdots[ret->nbc - midConComp[j]] = mdots[-2 - midConComp[j]];
           midConComp[j] = (int)(ret->nbc - midConComp[j]);
         }
@@ -1098,7 +1091,7 @@ CannedCobordismImpl_compose_horizontal(CannedCobordismImplData *this_d,
         if (midConComp[j] >= 0)
           ret->connectedComponent[reti] = midConComp[j];
         else {
-          ret->connectedComponent[reti] = (int8_t)(ret->nbc - midConComp[j]);
+          ret->connectedComponent[reti] = (int)(ret->nbc - midConComp[j]);
           rdots[ret->nbc - midConComp[j]] = mdots[-2 - midConComp[j]];
           midConComp[j] = (int)(ret->nbc - midConComp[j]);
         }
@@ -1110,7 +1103,7 @@ CannedCobordismImpl_compose_horizontal(CannedCobordismImplData *this_d,
       break;
   }
 
-  int8_t rgenus[ret->nbc + nc + 4];
+  int rgenus[ret->nbc + nc + 4];
   memset(rgenus, 0, ret->nbc + nc + 4);
   for (int i = 0; i < ret->nbc + nc + 2; i++) {
     int b = 0;
@@ -1208,20 +1201,20 @@ CannedCobordismImpl_compose_horizontal(CannedCobordismImplData *this_d,
 
     int g = 2 - b - x;
     assert(g % 2 == 0 && g >= 0);
-    rgenus[i] = (int8_t)(g / 2);
+    rgenus[i] = (int)(g / 2);
   }
 
   ret->ncc = 0;
   for (int i = 0; i < ret->nbc; i++) {
     if (ret->connectedComponent[i] > ret->ncc) {
-      int8_t j = ret->connectedComponent[i];
+      int j = ret->connectedComponent[i];
       for (int k = i; k < ret->nbc; k++) {
         if (ret->connectedComponent[k] == j)
           ret->connectedComponent[k] = ret->ncc;
         else if (ret->connectedComponent[k] == ret->ncc)
           ret->connectedComponent[k] = j;
       }
-      int8_t tmp = rdots[ret->ncc];
+      int tmp = rdots[ret->ncc];
       rdots[ret->ncc] = rdots[j];
       rdots[j] = tmp;
       tmp = rgenus[ret->ncc];
@@ -1234,12 +1227,12 @@ CannedCobordismImpl_compose_horizontal(CannedCobordismImplData *this_d,
   }
 
   int rncc = ret->ncc;
-  ret->ncc += (int8_t)unconnected;
-  ret->dots = (int8_t *)malloc((size_t)ret->ncc * sizeof(int8_t));
+  ret->ncc += (int)unconnected;
+  ret->dots = (int *)malloc((size_t)ret->ncc * sizeof(int));
   memcpy(ret->dots, rdots, (size_t)rncc);
   memcpy(ret->dots + rncc, udots, (size_t)unconnected);
 
-  ret->genus = (int8_t *)malloc((size_t)ret->ncc * sizeof(int8_t));
+  ret->genus = (int *)malloc((size_t)ret->ncc * sizeof(int));
   memcpy(ret->genus, rgenus, (size_t)rncc);
   memcpy(ret->genus + rncc, ugenus, (size_t)unconnected);
 

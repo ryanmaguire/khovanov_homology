@@ -3,9 +3,20 @@
 #include "../../topology/CannedCobordismImpl.h"
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
 /* Macro to safely isolate structural access. Protects against future changes in Arjun's Komplex. */
 #define SET_COMPLEX_DIFFERENTIAL(k_ptr, idx, mat_ptr) ((k_ptr)->differentials[(idx)] = (mat_ptr))
+
+//debug helper
+static void debug_report_khbuild(const char *location, const char *msg, int h, int row, int col) {
+    char command[2048];
+    snprintf(command, sizeof(command),
+             "sh -lc 'source .dbg/trefoil-poincare-hang.env 2>/dev/null || { DEBUG_SERVER_URL=\"http://127.0.0.1:7777/event\"; DEBUG_SESSION_ID=\"trefoil-poincare-hang\"; }; curl -sX POST \"$DEBUG_SERVER_URL\" -H \"Content-Type: application/json\" -d \"{\\\"sessionId\\\":\\\"$DEBUG_SESSION_ID\\\",\\\"runId\\\":\\\"pre-fix\\\",\\\"hypothesisId\\\":\\\"B\\\",\\\"location\\\":\\\"%s\\\",\\\"msg\\\":\\\"%s\\\",\\\"data\\\":{\\\"h\\\":%d,\\\"row\\\":%d,\\\"col\\\":%d}}\" >/dev/null 2>&1'",
+             location, msg, h, row, col);
+    (void)system(command);
+}
+//debug end
 
 /* External definitions provided by Arjun/Eric's algebraic layer */
 extern LCCC* LCCC_create_with_cobordism(int sign, CannedCobordism* cc);
@@ -33,23 +44,57 @@ static int pop_count(unsigned int n) {
  */
 static Cap* build_resolution_cap(Knot* knot, int r) {
     int m = knot->m;
-    Cap* cap = Cap_create(2 * m, 0); 
+    int cap_size = 4 * m;
+    Cap* cap = Cap_create(cap_size, 0); 
     if (!cap) return NULL; 
-    
+
+    int max_edge = 0;
     for (int k = 0; k < m; k++) {
-        int a = knot->pd[k][0], b = knot->pd[k][1];
-        int c = knot->pd[k][2], d = knot->pd[k][3];
-        
-        if ((r & (1 << k)) == 0) { 
-            /* 0-smoothing: connect (a,b) and (c,d) */
-            cap->pairings[a] = b; cap->pairings[b] = a;
-            cap->pairings[c] = d; cap->pairings[d] = c;
-        } else { 
-            /* 1-smoothing: connect (a,d) and (b,c) */
-            cap->pairings[a] = d; cap->pairings[d] = a;
-            cap->pairings[b] = c; cap->pairings[c] = b;
+        for (int i = 0; i < 4; i++) {
+            if (knot->pd[k][i] > max_edge) max_edge = knot->pd[k][i];
         }
     }
+    
+    int* first_port = (int*)malloc((max_edge + 1) * sizeof(int));
+    for (int i = 0; i <= max_edge; i++) first_port[i] = -1;
+    
+    int* external_mate = (int*)malloc(cap_size * sizeof(int));
+    
+    for (int k = 0; k < m; k++) {
+        for (int i = 0; i < 4; i++) {
+            int port = 4 * k + i;
+            int edge = knot->pd[k][i];
+            if (first_port[edge] == -1) {
+                first_port[edge] = port;
+            } else {
+                int mate = first_port[edge];
+                external_mate[port] = mate;
+                external_mate[mate] = port;
+            }
+        }
+    }
+    free(first_port);
+
+    for (int k = 0; k < m; k++) {
+        int p0 = 4 * k + 0, p1 = 4 * k + 1;
+        int p2 = 4 * k + 2, p3 = 4 * k + 3;
+        
+        int in_mate[4];
+        if ((r & (1 << k)) == 0) {
+            in_mate[0] = p1; in_mate[1] = p0;
+            in_mate[2] = p3; in_mate[3] = p2;
+        } else {
+            in_mate[0] = p3; in_mate[3] = p0;
+            in_mate[1] = p2; in_mate[2] = p1;
+        }
+        
+        cap->pairings[p0] = external_mate[in_mate[0]];
+        cap->pairings[p1] = external_mate[in_mate[1]];
+        cap->pairings[p2] = external_mate[in_mate[2]];
+        cap->pairings[p3] = external_mate[in_mate[3]];
+    }
+    
+    free(external_mate);
     return cap;
 }
 
@@ -216,9 +261,15 @@ bool KhovanovKomplex_build(KhovanovKomplex* kh_complex) {
 
     Komplex* komplex = kh_complex->komplex;
     int m = kh_complex->knot->m;
+    //debug start
+    debug_report_khbuild("KhovanovKomplex.c:build:enter", "start", m, 0, 0);
+    //debug end
 
     /* Iterate through adjacent homological degrees (h -> h+1) to build block matrices */
     for (int h = 0; h < m; h++) {
+        //debug block
+        debug_report_khbuild("KhovanovKomplex.c:block:start", "block", h, kh_complex->columns[h+1]->n, kh_complex->columns[h]->n);
+        //debug end
         
         CobMatrix* boundary = CobMatrix_create(kh_complex->columns[h], kh_complex->columns[h+1], false);
         if (!boundary) return false;
@@ -226,6 +277,11 @@ bool KhovanovKomplex_build(KhovanovKomplex* kh_complex) {
         /* Double loop mapping every source state in C_h to every target state in C_{h+1} */
         for (int row = 0; row < kh_complex->columns[h+1]->n; row++) {
             int target_r = kh_complex->states_by_h[h+1][row];
+            if (row == 0 || row == kh_complex->columns[h+1]->n - 1) {
+                //debug row
+                debug_report_khbuild("KhovanovKomplex.c:block:row", "row", h, row, target_r);
+                //debug end
+            }
             
             for (int col = 0; col < kh_complex->columns[h]->n; col++) {
                 int source_r = kh_complex->states_by_h[h][col];
@@ -235,25 +291,61 @@ bool KhovanovKomplex_build(KhovanovKomplex* kh_complex) {
                 
                 /* If a valid topological edge exists (sign != 0) */
                 if (sign != 0) {
+                    if (h == 0) {
+                        //debug edge
+                        debug_report_khbuild("KhovanovKomplex.c:h0-edge:before-create", "edge", h, row, col);
+                        //debug end
+                    }
+                    if (h == 0 && row == 0) {
+                        //debug first
+                        debug_report_khbuild("KhovanovKomplex.c:first-edge:before-create", "first", h, row, col);
+                        //debug end
+                    }
                     /* Create the geometric surface (cobordism) spanning the two states */
                     CannedCobordismImplData* impl = CannedCobordismImpl_create(
                         kh_complex->columns[h]->smoothings[col], 
                         kh_complex->columns[h+1]->smoothings[row]
                     );
+                    if (h == 0) {
+                        //debug made
+                        debug_report_khbuild("KhovanovKomplex.c:h0-edge:after-create", impl ? "made" : "null", h, row, col);
+                        //debug end
+                    }
+                    if (h == 0 && row == 0) {
+                        //debug first done
+                        debug_report_khbuild("KhovanovKomplex.c:first-edge:after-create", impl ? "first ok" : "first null", h, row, col);
+                        //debug end
+                    }
                     CannedCobordism* cc = CannedCobordismImpl_as_CannedCobordism(impl);
                     
                     /* Wrap the geometry and the algebraic sign into a linear combination object */
                     LCCC* lc = LCCC_create_with_cobordism(sign, cc); 
+                    if (h == 0 && row == 0) {
+                        //debug lccc
+                        debug_report_khbuild("KhovanovKomplex.c:first-edge:after-lccc", lc ? "lccc ok" : "lccc null", h, row, col);
+                        //debug end
+                    }
                     
                     /* Inject into the algebraic grid */
                     CobMatrix_putEntry(boundary, row, col, lc);
+                    if (h == 0 && row == 0) {
+                        //debug put
+                        debug_report_khbuild("KhovanovKomplex.c:first-edge:after-put", "put", h, row, col);
+                        //debug end
+                    }
                 }
             }
         }
         
         /* Mount the constructed block matrix into the chain complex */
         SET_COMPLEX_DIFFERENTIAL(komplex, h, boundary);
+        //debug done
+        debug_report_khbuild("KhovanovKomplex.c:block:done", "done", h, kh_complex->columns[h+1]->n, kh_complex->columns[h]->n);
+        //debug end
     }
 
+    //debug exit
+    debug_report_khbuild("KhovanovKomplex.c:build:exit", "exit", m, 0, 0);
+    //debug end
     return true;
 }

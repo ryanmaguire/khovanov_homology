@@ -4,6 +4,16 @@
 #include <stdio.h>
 #include <string.h>
 
+//debug helper
+static void debug_report_knotencoder(const char *location, const char *msg, int a, int b, int c) {
+    char command[2048];
+    snprintf(command, sizeof(command),
+             "sh -lc 'source .dbg/trefoil-poincare-hang.env 2>/dev/null || { DEBUG_SERVER_URL=\"http://127.0.0.1:7777/event\"; DEBUG_SESSION_ID=\"trefoil-poincare-hang\"; }; curl -sX POST \"$DEBUG_SERVER_URL\" -H \"Content-Type: application/json\" -d \"{\\\"sessionId\\\":\\\"$DEBUG_SESSION_ID\\\",\\\"runId\\\":\\\"pre-fix\\\",\\\"hypothesisId\\\":\\\"A\\\",\\\"location\\\":\\\"%s\\\",\\\"msg\\\":\\\"%s\\\",\\\"data\\\":{\\\"a\\\":%d,\\\"b\\\":%d,\\\"c\\\":%d}}\" >/dev/null 2>&1'",
+             location, msg, a, b, c);
+    (void)system(command);
+}
+//debug end
+
 //popcount for homological grading
 
 int pop_count(unsigned int n)
@@ -99,7 +109,7 @@ Knot* knot_from_pd(int pd[][4], int m) {
     k->pd = malloc(m * sizeof(int*));
     for (int i = 0; i < m; i++) {
         k->pd[i] = malloc(4 * sizeof(int));
-        for (int j = 0; j < 4; j++) k->pd[i][j] = pd[i][j];
+        for (int j = 0; j < 4; j++) k->pd[i][j] = pd[i][j] - 1;
     }
     k->writhe = compute_writhe(pd, m);
     return k;
@@ -128,13 +138,24 @@ BivariatePoly* compute_khovanov_polynomial(Knot* knot) {
 
     BivariatePoly* poly = bp_create();
     
-    //build hypercube from pd
+    //debug start
+    debug_report_knotencoder("KnotEncoder.c:compute:start", "start", knot->m, knot->writhe, 0);
+    //debug end
     KhovanovKomplex* kh_complex = KhovanovKomplex_alloc(knot);
+    //debug alloc
+    debug_report_knotencoder("KnotEncoder.c:alloc:done", kh_complex ? "alloc ok" : "alloc null", knot->m, knot->writhe, kh_complex != NULL);
+    //debug end
     if (!kh_complex || !KhovanovKomplex_build(kh_complex)) {
+        //build-failed
+        debug_report_knotencoder("KnotEncoder.c:build:failed", "build fail", knot->m, knot->writhe, kh_complex != NULL);
+        //debug end
         printf("Error: Failed to build KhovanovKomplex.\n");
         if (kh_complex) KhovanovKomplex_free(kh_complex);
         return poly;
     }
+    //debug done
+    debug_report_knotencoder("KnotEncoder.c:build:done", "build ok", knot->m, knot->writhe, 1);
+    //debug end
 
     //get graded euler
     for (int h = 0; h <= knot->m; h++) {
