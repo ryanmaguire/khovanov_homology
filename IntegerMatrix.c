@@ -218,36 +218,32 @@ int zeroColumnsToEnd(Mat* m) {
  * and structural torsion coefficients of the Khovanov Homology group.
  */
 void toSmithForm(Mat* m) {
-    // Isolate matrix to prevent cascading actions from breaking the rest of the chain complex
     isolateMat(m);
 
     int row = 0, col = 0;
     while (row < m->rows && col < m->cols) {
-        // Find next active rows and columns that are non-zero
         while (row < m->rows && rowNonZeroes(m, row) == 0) row++;
         while (col < m->cols && columnNonZeroes(m, col) == 0) col++;
         
         if (row >= m->rows || col >= m->cols) break;
         
-        // Bring pivot element to matching diagonal position
         if (row > col) { SwapRows(m, row, col); row = col; }
         else if (col > row) { SwapCols(m, row, col); col = row; }
         
-        // Euclidean elimination loop for column clearing
-        while (rowNonZeroes(m, row) != 1 || columnNonZeroes(m, col) != 1 || m->matrix[row][col] <= 0) {
-            // Force values in current column to be positive
-            for (int j = row; j < m->rows; j++) {
-                if (m->matrix[j][col] < 0) {
-                    multRow(m, j, -1);
-                }
-            }
+        //Euclidean elimination loop
+        while (rowNonZeroes(m, row) > 1 || columnNonZeroes(m, col) > 1 || m->matrix[row][col] <= 0) {
             
-            // Eliminate all entries under the pivot inside the column using the Euclidean algorithm
-            while (columnNonZeroes(m, col) != 1 || m->matrix[row][col] == 0) {
+            if (rowNonZeroes(m, row) == 0 && columnNonZeroes(m, col) == 0) break;
+
+            //clear column
+            while (columnNonZeroes(m, col) > 1 || m->matrix[row][col] <= 0) {
+                //force positives
+                for (int j = row; j < m->rows; j++) {
+                    if (m->matrix[j][col] < 0) multRow(m, j, -1);
+                }
+                
                 int64_t min_val = -1;
                 int idxmin = -1;
-                
-                // Locate the absolute minimum positive element to serve as the new temporary pivot
                 for (int j = row; j < m->rows; j++) {
                     int64_t v = m->matrix[j][col];
                     if (v > 0 && (min_val == -1 || v < min_val)) {
@@ -255,48 +251,48 @@ void toSmithForm(Mat* m) {
                     }
                 }
                 
+                if (min_val == -1) break; //break
                 if (idxmin != row) SwapRows(m, row, idxmin);
                 
-                // Reduce other rows using integer division (Euclidean Step)
                 for (int j = row + 1; j < m->rows; j++) {
                     if (m->matrix[j][col] != 0) {
                         addRow(m, j, row, -(m->matrix[j][col] / min_val));
                     }
                 }
             }
-        }
-        
-        // Force values in the row to be positive
-        for (int j = col + 1; j < m->cols; j++) {
-            if (m->matrix[row][j] < 0) {
-                multColumn(m, j, -1);
-            }
-        }
-        
-        // Eliminate entries to the right of the pivot inside the row using the Euclidean algorithm
-        while (rowNonZeroes(m, row) != 1 || m->matrix[row][col] == 0) {
-            int64_t min_val = -1;
-            int idxmin = -1;
             
-            for (int j = col; j < m->cols; j++) {
-                int64_t v = m->matrix[row][j];
-                if (v > 0 && (min_val == -1 || v < min_val)) {
-                    min_val = v; idxmin = j;
+            //clear the row
+            while (rowNonZeroes(m, row) > 1 || m->matrix[row][col] <= 0) {
+                //force positive values
+                for (int j = col; j < m->cols; j++) {
+                    if (m->matrix[row][j] < 0) multColumn(m, j, -1);
                 }
-            }
-            
-            if (idxmin != col) SwapCols(m, col, idxmin);
-            
-            // Reduce remaining columns
-            for (int j = col + 1; j < m->cols; j++) {
-                if (m->matrix[row][j] != 0) {
-                    addColumn(m, j, col, -(m->matrix[row][j] / min_val));
+                
+                int64_t min_val = -1;
+                int idxmin = -1;
+                for (int j = col; j < m->cols; j++) {
+                    int64_t v = m->matrix[row][j];
+                    if (v > 0 && (min_val == -1 || v < min_val)) {
+                        min_val = v; idxmin = j;
+                    }
+                }
+                
+                if (min_val == -1) break; //break
+                if (idxmin != col) SwapCols(m, col, idxmin);
+                
+                for (int j = col + 1; j < m->cols; j++) {
+                    if (m->matrix[row][j] != 0) {
+                        addColumn(m, j, col, -(m->matrix[row][j] / min_val));
+                    }
                 }
             }
         }
+        
+        //move along diag
+        row++;
+        col++;
     }
     
-    // Clean up structure by packing all zero dimensions together
     zeroRowsToEnd(m);
     zeroColumnsToEnd(m);
 }
