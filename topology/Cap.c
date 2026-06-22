@@ -138,6 +138,19 @@ int Cap_compareTo(const Cap *a, const Cap *b) {
   return 0;
 }
 
+Cap *Cap_removeCycle(const Cap *cap) {
+  if (cap == NULL) return NULL;
+
+  int new_ncycles = cap->ncycles > 0 ? cap->ncycles - 1 : 0;
+  Cap *copy = Cap_create(cap->n, new_ncycles);
+  if (copy == NULL) return NULL;
+
+  if (cap->n > 0) {
+    memcpy(copy->pairings, cap->pairings, (size_t)cap->n * sizeof(int));
+  }
+  return copy;
+}
+
 /* ----------------------------------------------------------------
  * Purpose:
  *      Horizontal composition of two Caps. Joins nc consecutive

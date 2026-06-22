@@ -106,6 +106,22 @@ int Cap_compareTo(const Cap *a, const Cap *b);
 
 /*
  * Purpose:
+ *      Clone a Cap and remove one isolated interior cycle.
+ * Arguments:
+ *      cap
+ * Argument descriptions:
+ *      cap — the Cap to clone
+ * Output:
+ *      Cap pointer
+ * Output description:
+ *      Returns a newly allocated Cap with the same boundary pairing data
+ *      and one fewer interior cycle. If no cycle is present, this is a
+ *      plain clone of the original Cap.
+ */
+Cap *Cap_removeCycle(const Cap *cap);
+
+/*
+ * Purpose:
  *      Horizontal composition of two Caps, joining nc consecutive
  *      edges starting at position 'start' in this Cap with nc edges
  *      starting at 'cstart' in the other Cap.
@@ -133,5 +149,4 @@ int Cap_compareTo(const Cap *a, const Cap *b);
  */
 Cap *Cap_compose(const Cap *a, int start, const Cap *b, int cstart, int nc,
                  int *joins);
-
 #endif /* CAP_H */

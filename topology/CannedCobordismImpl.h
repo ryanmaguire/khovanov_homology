@@ -112,19 +112,24 @@ CannedCobordismImplData *CannedCobordismImpl_create(Cap *top, Cap *bottom);
  *
  *  Purpose:
  *      Factory: creates the identity/isomorphism cobordism for a Cap.
- *      The resulting cobordism has ncc == nbc, each boundary component
- *      is its own connected component, with zero dots and genus.
+ *
+ *      Ordinary boundary components are represented by cylinder components.
+ *      Interior cycle components are represented by components connecting
+ *      the corresponding top-cycle and bottom-cycle boundary components.
  *
  *  Arguments:
- *      c — the Cap (must have ncycles == 0)
+ *      c — the Cap. May contain interior cycles; each top-cycle boundary is
+ *          paired with the corresponding bottom-cycle boundary in the identity
+ *          cobordism.
  *
  *  Output:
- *      A fully initialised CannedCobordism (vtable-wrapped) that
- *      is an isomorphism.
+ *      A fully initialised CannedCobordism (vtable-wrapped) that represents
+ *      the identity cobordism on c.
  *
  *  Method:
- *      Build a CannedCobordismImpl with top == bottom == c,
- *      connectedComponent[i] = i, dots = genus = zeros.
+ *      Build a CannedCobordismImpl with top == bottom == c. Ordinary boundary
+ *      components are made into separate cylinder components, and each
+ *      interior cycle connects its top and bottom cycle boundaries.
  */
 CannedCobordism *CannedCobordismImpl_isomorphism(Cap *c);
 
@@ -153,18 +158,26 @@ void CannedCobordismImpl_reverseMaps(CannedCobordismImplData *impl);
  *  CannedCobordismImpl_equals
  *
  *  Purpose:
- *      Tests structural equality of two CannedCobordismImpl objects.
+ *      Tests structural equality of two CannedCobordismImpl objects
  *
  *  Arguments:
  *      a — first impl data
  *      b — second impl data
  *
  *  Output:
- *      true if all fields match.
+ *      true if the two impl objects represent the same cobordism data
  *
  *  Method:
- *      Compare ncc, dots, genus, nbc, connectedComponent, n, hpower,
- *      component, top, and bottom.
+ *      Requires matching top and bottom Caps, matching boundary-component
+ *      decomposition component[], and matching hpower, dots, and genus.
+ *
+ *      The connectedComponent[] labels are compared up to relabeling:
+ *      two cobordisms are equal if they define the same partition of boundary
+ *      components into connected components, even if the internal component
+ *      numbers differ
+ *
+ *      Closed connected components not incident to boundary components are
+ *      matched by their dot/genus data
  */
 bool CannedCobordismImpl_equals(const CannedCobordismImplData *a,
                                 const CannedCobordismImplData *b);
@@ -211,18 +224,22 @@ int CannedCobordismImpl_compareTo(const CannedCobordismImplData *a,
  *  CannedCobordismImpl_isIsomorphism
  *
  *  Purpose:
- *      Checks whether this cobordism is an isomorphism.
- *      Only works on delooped cobordisms (top.ncycles == 0).
+ *      Checks whether this cobordism is the identity/isomorphism cobordism
+ *      on its Cap.
  *
  *  Arguments:
  *      impl — the impl data to check
  *
  *  Output:
- *      true if the cobordism is the identity.
+ *      true if the cobordism is the identity/isomorphism cobordism.
  *
  *  Method:
- *      Verify top == bottom, ncycles == 0, nbc == ncc, hpower == 0,
- *      connectedComponent[i] == i, dots[i] == 0, genus[i] == 0.
+ *      Requires top == bottom, hpower == 0, and no dots or genus.
+ *      Each ordinary boundary component must be its own cylinder component.
+ *      Each interior cycle must connect exactly the corresponding top-cycle
+ *      boundary component to the corresponding bottom-cycle boundary component.
+ *
+ *      Connected-component labels themselves need not equal boundary indices.
  */
 bool CannedCobordismImpl_isIsomorphism(const CannedCobordismImplData *impl);
 
@@ -340,5 +357,20 @@ CannedCobordismImpl_as_CannedCobordism(CannedCobordismImplData *impl);
  *      structures.
  */
 void CannedCobordismImpl_free(CannedCobordismImplData *impl);
-
+/*
+ *  CannedCobordismImpl_stripClosed
+ *
+ *  Purpose:
+ *      Remove closed connected components that have already been accounted
+ *      for by reduction/evaluation, so that remaining cobordisms compare by
+ *      their boundary-attached data.
+ *
+ *  Warning:
+ *      Do not call this before applying the Bar-Natan closed-surface rules;
+ *      closed components with dots or genus may contribute nontrivial scalar
+ *      factors.
+ */
+CannedCobordism *CannedCobordismImpl_stripClosed(CannedCobordism *cc);
+CannedCobordism *CannedCobordismImpl_capOffTop(CannedCobordism *cc, Cap *new_top, bool add_dot);
+CannedCobordism *CannedCobordismImpl_cupOnBottom(CannedCobordism *cc, Cap *new_bottom, bool add_dot);
 #endif /* CANNEDCOBORDISMIMPL_H */

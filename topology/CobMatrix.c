@@ -11,13 +11,16 @@ static MatrixEntry *create_entry(int col_idx, LCCC *value) {
   return entry;
 }
 
-// Helper to free a matrix row list (the row itself is a value struct usually)
+//Helper to free a matrix row list (the row itself is a value struct usually)
 static void free_matrix_row(MatrixRow *row) {
   MatrixEntry *current = row->head;
   while (current != NULL) {
     MatrixEntry *next = current->next;
-    // Optionally free the LCCC here if ownership dictates:
-    // LCCC_free(current->value);
+    /*
+    * MatrixEntry nodes are freed here. LCCC values are not freed here because
+    * entries may share LCCC pointers moved from other matrices during extraction
+    * or composition. Ownership is handled by the surrounding reduction pipeline.
+    */
     free(current);
     current = next;
   }
@@ -54,8 +57,11 @@ void CobMatrix_free(CobMatrix *m) {
     free_matrix_row(&m->entries[i]);
   }
   free(m->entries);
-  // Note: ownership of source/target is murky here depending on 'shared',
-  // assume handled elsewhere or add logic.
+  /*
+  * CobMatrix_free releases the matrix rows and entry nodes only.
+  * It does not free source or target SmoothingColumns, because those columns
+  * may be shared with the ambient Komplex or with extracted row/column slices.
+  */
   free(m);
 }
 
@@ -142,10 +148,18 @@ CobMatrix *CobMatrix_compose(CobMatrix *this_m, CobMatrix *that_m) {
     MatrixEntry *rowI = this_m->entries[i].head;
     while (rowI != NULL) {
       int j = rowI->column_index;
+      if (j < 0 || j >= that_m->target->n) {
+        rowI = rowI->next;
+        continue;
+      }
       // Iterate over that_m's row j
       MatrixEntry *that_rowJ = that_m->entries[j].head;
       while (that_rowJ != NULL) {
         int k = that_rowJ->column_index;
+        if (k < 0 || k >= result->source->n) {
+          that_rowJ = that_rowJ->next;
+          continue;
+        }
         LCCC *composed = LCCC_compose(rowI->value, that_rowJ->value);
 
         if (composed != NULL && !LCCC_isZero(composed)) {
@@ -228,7 +242,13 @@ bool CobMatrix_isZero(CobMatrix *m) {
 // ----------------------------------------------------
 // Row / Column Extraction
 // ----------------------------------------------------
-
+/*
+ * Extract one source column from m.
+ *
+ * This mutates m in place by removing the selected column and reindexing
+ * remaining entries. The returned matrix is a one-column slice using shallow
+ * SmoothingColumn data and moved LCCC pointers.
+ */
 CobMatrix *CobMatrix_extractColumn(CobMatrix *m, int column_idx) {
   SmoothingColumn *newTarget = m->target;
   SmoothingColumn *newSource =
@@ -295,7 +315,13 @@ CobMatrix *CobMatrix_extractColumn(CobMatrix *m, int column_idx) {
 
   return res;
 }
-
+/*
+ * Extract one target row from m.
+ *
+ * This mutates m in place by removing the selected row and shifting remaining
+ * rows upward. The returned matrix is a one-row slice using shallow
+ * SmoothingColumn data and moved LCCC pointers.
+ */
 CobMatrix *CobMatrix_extractRow(CobMatrix *m, int row_idx) {
   SmoothingColumn *newSource = m->source;
   SmoothingColumn *newTarget =
