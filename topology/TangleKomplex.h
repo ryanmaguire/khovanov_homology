@@ -3,6 +3,7 @@
 #include "Komplex.h"
 #include "CobMatrix.h"
 #include "CannedCobordismImpl.h"
+#include <stdbool.h>
 /*
  * Create the unreduced Khovanov chain complex of a single crossing.
  * Positive crossing:

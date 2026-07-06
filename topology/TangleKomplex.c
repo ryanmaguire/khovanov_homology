@@ -5,7 +5,8 @@
 /* Helper to horizontally compose two Caps */
 static Cap *Cap_compose_tangle(const Cap *a, const Cap *b, int n_strands) {
   /* Join the n_strands right endpoints of a with the n_strands left endpoints of b.
-     In our convention, endpoints 0..n-1 are left, n..2n-1 are right. */
+     Endpoint blocks are 0..n-1 on the left and n..2n-1 on the right; the right
+     block is ordered cyclically, so identity pairings use 2n-1-i. */
   return Cap_compose(a, n_strands, b, 0, n_strands, NULL);
 }
 /* Helper to horizontally compose two SmoothingColumns */
@@ -25,13 +26,6 @@ static SmoothingColumn *SmoothingColumn_tensorProduct(SmoothingColumn *A, Smooth
       C->numbers[k] = A->numbers[i] + B->numbers[j];
       /* The tensor product Cap */
       Cap *z = Cap_compose_tangle(A->smoothings[i], B->smoothings[j], n_strands);
-      
-      /* Bar-Natan algorithm: if new cycles are formed during horizontal composition,
-         they must be delooped. However, the basic Cap_compose just increments ncycles.
-         The delooping will happen during Komplex_reduce_with_oracle because the cycles
-         become isolated circles. Actually, in Bar-Natan's formal complex, circles are 
-         delooped into two basis elements (+1 and -1 shift).
-
       C->smoothings[k] = z;
       k++;
     }
@@ -65,7 +59,7 @@ static CobMatrix *CobMatrix_tensorProductMap1(CobMatrix *d_left, SmoothingColumn
           CannedCobordism *ftid = f->compose_partial(f, n_strands, id, 0, n_strands);
           
           /* Add to LCCC */
-          LCCC *single = LCCC_createSingle(ftid);
+          LCCC *single = LCCC_createSingle(ftid, term->coeff);
           LCCC *sum = LCCC_add(f_tensor_id, single);
           LCCC_free(f_tensor_id);
           LCCC_free(single);
@@ -88,9 +82,7 @@ static CobMatrix *CobMatrix_tensorProductMap2(SmoothingColumn *col_left, CobMatr
   SmoothingColumn *new_tgt = SmoothingColumn_tensorProduct(col_left, d_right->target, n_strands);
   
   CobMatrix *res = CobMatrix_create(new_src, new_tgt, true);
-  
-  /* Over F_2, the sign (-1)^deg_left is irrelevant. */
-  (void)deg_left;
+  int koszul_sign = (deg_left % 2 != 0) ? -1 : 1;
   
   for (int i = 0; i < d_right->target->n; i++) {
     MatrixEntry *entry = d_right->entries[i].head;
@@ -110,7 +102,7 @@ static CobMatrix *CobMatrix_tensorProductMap2(SmoothingColumn *col_left, CobMatr
           
           CannedCobordism *idtg = id->compose_partial(id, n_strands, g, 0, n_strands);
           
-          LCCC *single = LCCC_createSingle(idtg);
+          LCCC *single = LCCC_createSingle(idtg, term->coeff * koszul_sign);
           LCCC *sum = LCCC_add(id_tensor_g, single);
           LCCC_free(id_tensor_g);
           LCCC_free(single);
@@ -194,7 +186,8 @@ Komplex *Komplex_compose_tangles(Komplex *L, Komplex *R, int n_strands) {
               for (int r = 0; r < d_tensor_id->target->n; r++) {
                 MatrixEntry *entry = d_tensor_id->entries[r].head;
                 while (entry != NULL) {
-                  CobMatrix_addEntry(Dk, row_offset + r, col_offset + entry->column_index, LCCC_clone(entry->value));
+                  CobMatrix_addEntry(Dk, row_offset + r, col_offset + entry->column_index, entry->value);
+                  entry->value = NULL;
                   entry = entry->next;
                 }
               }
@@ -210,7 +203,8 @@ Komplex *Komplex_compose_tangles(Komplex *L, Komplex *R, int n_strands) {
               for (int r = 0; r < id_tensor_d->target->n; r++) {
                 MatrixEntry *entry = id_tensor_d->entries[r].head;
                 while (entry != NULL) {
-                  CobMatrix_addEntry(Dk, row_offset + r, col_offset + entry->column_index, LCCC_clone(entry->value));
+                  CobMatrix_addEntry(Dk, row_offset + r, col_offset + entry->column_index, entry->value);
+                  entry->value = NULL;
                   entry = entry->next;
                 }
               }
@@ -240,8 +234,9 @@ Komplex *Komplex_identityBraid(int n_strands) {
   c0->smoothings = (Cap **)malloc(sizeof(Cap *));
   Cap *id_cap = Cap_create(2 * n_strands, 0);
   for (int i = 0; i < n_strands; i++) {
-    id_cap->pairings[i] = i + n_strands;
-    id_cap->pairings[i + n_strands] = i;
+    int right_i = 2 * n_strands - 1 - i;
+    id_cap->pairings[i] = right_i;
+    id_cap->pairings[right_i] = i;
   }
   c0->smoothings[0] = id_cap;
   
@@ -258,30 +253,31 @@ Komplex *Komplex_singleCrossing(int n_strands, int crossing_index, bool positive
   Cap *cap1 = Cap_create(2 * n_strands, 0);
   
   for (int i = 0; i < n_strands; i++) {
-    if (i == crossing_index || i == crossing_index + 1) {
-      /* 0-smoothing: identity matching */
-      cap0->pairings[i] = i + n_strands;
-      cap0->pairings[i + n_strands] = i;
-      
-      /* 1-smoothing: horizontal matching */
-      int other = (i == crossing_index) ? crossing_index + 1 : crossing_index;
-      cap1->pairings[i] = other;
-      cap1->pairings[i + n_strands] = other + n_strands;
-    } else {
-      /* Identity for untouched strands */
-      cap0->pairings[i] = i + n_strands;
-      cap0->pairings[i + n_strands] = i;
-      cap1->pairings[i] = i + n_strands;
-      cap1->pairings[i + n_strands] = i;
-    }
+    int right_i = 2 * n_strands - 1 - i;
+    
+    /* 0-smoothing: identity matching */
+    cap0->pairings[i] = right_i;
+    cap0->pairings[right_i] = i;
+    
+    /* Identity for untouched strands */
+    cap1->pairings[i] = right_i;
+    cap1->pairings[right_i] = i;
   }
+
+  /* 1-smoothing: horizontal matching */
+  cap1->pairings[crossing_index] = crossing_index + 1;
+  cap1->pairings[crossing_index + 1] = crossing_index;
+  int r0 = 2 * n_strands - 1 - crossing_index;
+  int r1 = 2 * n_strands - 1 - (crossing_index + 1);
+  cap1->pairings[r0] = r1;
+  cap1->pairings[r1] = r0;
   
   SmoothingColumn *c0 = (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
   c0->n = 1;
   c0->numbers = (int *)malloc(sizeof(int));
   c0->smoothings = (Cap **)malloc(sizeof(Cap *));
   c0->smoothings[0] = positive ? cap0 : cap1;
-  c0->numbers[0] = positive ? 0 : -1; /* Example shift, depends on FPT convention */
+  c0->numbers[0] = positive ? 0 : -1;
   
   SmoothingColumn *c1 = (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
   c1->n = 1;
@@ -296,17 +292,15 @@ Komplex *Komplex_singleCrossing(int n_strands, int crossing_index, bool positive
   /* Saddle cobordism */
   CannedCobordismImplData *impl = CannedCobordismImpl_create(c0->smoothings[0], c1->smoothings[0]);
   /* Initialize simple CCs. Isomorphism and saddle don't have dots/genus initially */
-  impl->ncc = impl->nbc; 
-     
   impl->ncc = impl->nbc;
   for (int i = 0; i < impl->nbc; i++) impl->connectedComponent[i] = i;
-  impl->dots = (int8_t *)calloc((size_t)impl->ncc, sizeof(int8_t));
-  impl->genus = (int8_t *)calloc((size_t)impl->ncc, sizeof(int8_t));
+  impl->dots = (int *)calloc((size_t)impl->ncc, sizeof(int));
+  impl->genus = (int *)calloc((size_t)impl->ncc, sizeof(int));
   
   CannedCobordism *saddle = CannedCobordismImpl_as_CannedCobordism(impl);
   
   CobMatrix *d = CobMatrix_create(c0, c1, true);
-  CobMatrix_putEntry(d, 0, 0, LCCC_createSingle(saddle));
+  CobMatrix_putEntry(d, 0, 0, LCCC_createSingle(saddle, 1));
   k->differentials[0] = d;
   
   return k;

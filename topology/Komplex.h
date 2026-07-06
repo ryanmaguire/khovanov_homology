@@ -71,6 +71,15 @@ int Komplex_reduce_with_oracle(Komplex *k, const CollapseSchedule *schedule);
 int Komplex_greedyReduce(Komplex *k);
 /*
  *  Purpose:
+ *      Repeatedly split off isolated circle factors from chain groups
+ *      into their two shifted summands.
+ *
+ *  Arguments:
+ *      k — the Khovanov chain complex
+ */
+void Komplex_deloop(Komplex *k);
+/*
+ *  Purpose:
  *      Verify the chain complex condition: d² = 0.
  *      For each consecutive pair of differentials, checks that
  *      differentials[i+1] ∘ differentials[i] = 0.

@@ -17,6 +17,31 @@
 #include "LCCC.h"
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
+
+static void CobMatrix_free_with_known_row_count(CobMatrix *m, int row_count) {
+  if (m == NULL)
+    return;
+
+  if (m->entries != NULL) {
+    for (int i = 0; i < row_count; i++) {
+      MatrixEntry *cur = m->entries[i].head;
+      while (cur != NULL) {
+        MatrixEntry *next = cur->next;
+
+        LCCC_free(cur->value);
+        free(cur);
+
+        cur = next;
+      }
+    }
+
+    free(m->entries);
+  }
+
+  free(m);
+}
+
 /* ================================================================
  *  Construction / Destruction
  * ================================================================ */
@@ -69,20 +94,31 @@ void Komplex_free(Komplex *k) {
  *  - d_{chain_idx+1} loses its column corresponding to target_row
  *    (since target_row is a source index in d_{chain_idx+1})
  * ================================================================ */
-/* Forward declaration for isIsomorphism. Over F_2, we can just check if
-   it evaluates to a single CannedCobordism that is an isomorphism. 
-   We assume LCCC_isIsomorphism is available or we check it manually. */
 static bool is_isomorphism(LCCC *lc) {
   if (lc == NULL || LCCC_isZero(lc)) return false;
-  /* An LCCC over F_2 is an isomorphism if it has exactly one term
-     and that term is an isomorphism. */
+  /* An LCCC is an isomorphism only if it has exactly one term
+     with coefficient ±1 and that term is an isomorphism. */
   if (lc->head != NULL && lc->head->next == NULL) {
+    if (lc->head->coeff != 1 && lc->head->coeff != -1) return false;
+
     CannedCobordism *cc = lc->head->cobordism;
     if (cc != NULL && cc->isIsomorphism != NULL) {
       return cc->isIsomorphism(cc);
     }
   }
   return false;
+}
+static bool pivot_preserves_q(CobMatrix *D, int source_col, int target_row) {
+  if (D == NULL || D->source == NULL || D->target == NULL)
+    return false;
+  if (D->source->numbers == NULL || D->target->numbers == NULL)
+    return false;
+  if (source_col < 0 || source_col >= D->source->n)
+    return false;
+  if (target_row < 0 || target_row >= D->target->n)
+    return false;
+
+  return D->source->numbers[source_col] == D->target->numbers[target_row];
 }
 bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
                                  int target_row) {
@@ -110,6 +146,8 @@ bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
   }
   /* The oracle guarantees this is an isomorphism, but verify */
   if (!is_isomorphism(phi))
+    return false;
+  if (!pivot_preserves_q(D, source_col, target_row))
     return false;
   /* ---- Step 2: Compute φ⁻¹ ---- */
   LCCC *phi_inv = LCCC_invert(phi);
@@ -171,6 +209,8 @@ bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
   CobMatrix *removed_row = CobMatrix_extractRow(D, target_row);
   CobMatrix_free(removed_col);
   CobMatrix_free(removed_row);
+  k->chain_groups[chain_idx] = D->source;
+  k->chain_groups[chain_idx + 1] = D->target;
   /* ---- Step 6: Update adjacent differential d_{chain_idx - 1} ---- */
   /*
    * d_{prev} maps C_{chain_idx-1} → C_{chain_idx}.
@@ -183,6 +223,7 @@ bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
     if (source_col < d_prev->target->n) {
       CobMatrix *prev_removed = CobMatrix_extractRow(d_prev, source_col);
       CobMatrix_free(prev_removed);
+      d_prev->target = k->chain_groups[chain_idx];
     }
   }
   /* ---- Step 7: Update adjacent differential d_{chain_idx + 1} ---- */
@@ -197,6 +238,7 @@ bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
     if (target_row < d_next->source->n) {
       CobMatrix *next_removed = CobMatrix_extractColumn(d_next, target_row);
       CobMatrix_free(next_removed);
+      d_next->source = k->chain_groups[chain_idx + 1];
     }
   }
   return true;
@@ -236,7 +278,7 @@ int Komplex_greedyReduce(Komplex *k) {
         MatrixEntry *cur = D->entries[tr].head;
         while (cur != NULL) {
           int sc = cur->column_index;
-          if (is_isomorphism(cur->value)) {
+          if (is_isomorphism(cur->value) && pivot_preserves_q(D, sc, tr)) {
             if (Komplex_blockReductionLemma(k, ci, sc, tr)) {
               reductions++;
               reduced = true;
@@ -253,6 +295,145 @@ int Komplex_greedyReduce(Komplex *k) {
   
   return reductions;
 }
+void Komplex_deloop(Komplex *k) {
+  bool reduced;
+  do {
+    reduced = false;
+
+    for (int h = 0; h < k->length; h++) {
+      SmoothingColumn *col = k->chain_groups[h];
+      if (col == NULL)
+        continue;
+
+      int split_idx = -1;
+      for (int i = 0; i < col->n; i++) {
+        if (col->smoothings[i] != NULL && col->smoothings[i]->ncycles > 0) {
+          split_idx = i;
+          break;
+        }
+      }
+      if (split_idx == -1)
+        continue;
+
+      int old_n = col->n;
+      int new_n = old_n + 1;
+      int *new_numbers = (int *)malloc((size_t)new_n * sizeof(int));
+      Cap **new_smoothings = (Cap **)malloc((size_t)new_n * sizeof(Cap *));
+      if (new_numbers == NULL || new_smoothings == NULL) {
+        free(new_numbers);
+        free(new_smoothings);
+        return;
+      }
+
+      memcpy(new_numbers, col->numbers, (size_t)old_n * sizeof(int));
+      memcpy(new_smoothings, col->smoothings, (size_t)old_n * sizeof(Cap *));
+      free(col->numbers);
+      free(col->smoothings);
+
+      col->n = new_n;
+      col->numbers = new_numbers;
+      col->smoothings = new_smoothings;
+
+      Cap *base_cap = col->smoothings[split_idx];
+      if (base_cap == NULL)
+        return;
+      Cap *v_plus_cap = Cap_removeCycle(base_cap);
+      Cap *v_minus_cap = Cap_removeCycle(base_cap);
+      if (v_plus_cap == NULL || v_minus_cap == NULL)
+        return;
+
+      col->smoothings[split_idx] = v_plus_cap;
+      col->smoothings[old_n] = v_minus_cap;
+
+      int base_shift = col->numbers[split_idx];
+      col->numbers[split_idx] = base_shift + 1;
+      col->numbers[old_n] = base_shift - 1;
+
+      if (h > 0 && k->differentials[h - 1] != NULL) {
+        CobMatrix *old_d_in = k->differentials[h - 1];
+        CobMatrix *new_d_in = CobMatrix_create(old_d_in->source, col, true);
+
+        for (int r = 0; r < old_n; r++) {
+          MatrixEntry *cur = old_d_in->entries[r].head;
+
+          while (cur != NULL) {
+            int c = cur->column_index;
+
+            if (r == split_idx) {
+              LCCC *lccc_plus =
+                  LCCC_cupOnBottom(cur->value, v_plus_cap, true);
+              LCCC *lccc_minus =
+                  LCCC_cupOnBottom(cur->value, v_minus_cap, false);
+
+              CobMatrix_addEntry(new_d_in, split_idx, c, lccc_plus);
+              CobMatrix_addEntry(new_d_in, old_n, c, lccc_minus);
+            } else {
+              CobMatrix_addEntry(new_d_in, r, c, LCCC_clone(cur->value));
+            }
+
+            cur = cur->next;
+          }
+        }
+
+        CobMatrix_reduce(new_d_in);
+
+        k->differentials[h - 1] = new_d_in;
+
+        CobMatrix_free_with_known_row_count(old_d_in, old_n);
+      }
+
+      if (h < k->length - 1 && k->differentials[h] != NULL) {
+        CobMatrix *old_d_out = k->differentials[h];
+        CobMatrix *new_d_out = CobMatrix_create(col, old_d_out->target, true);
+
+        for (int r = 0; r < old_d_out->target->n; r++) {
+          MatrixEntry *cur = old_d_out->entries[r].head;
+
+          while (cur != NULL) {
+            int c = cur->column_index;
+
+            if (c == split_idx) {
+              LCCC *lccc_plus =
+                  LCCC_capOffTop(cur->value, v_plus_cap, false);
+              LCCC *lccc_minus =
+                  LCCC_capOffTop(cur->value, v_minus_cap, true);
+
+              CobMatrix_addEntry(new_d_out, r, split_idx, lccc_plus);
+              CobMatrix_addEntry(new_d_out, r, old_n, lccc_minus);
+            } else {
+              CobMatrix_addEntry(new_d_out, r, c, LCCC_clone(cur->value));
+            }
+
+            cur = cur->next;
+          }
+        }
+
+        CobMatrix_reduce(new_d_out);
+
+        k->differentials[h] = new_d_out;
+        CobMatrix_free(old_d_out);
+      }
+      for (int di = 0; di < k->length - 1; di++) {
+        if (k->differentials[di] != NULL) {
+          CobMatrix_reduce(k->differentials[di]);
+        }
+      }
+
+      bool d2_ok_after_split = Komplex_verify_d_squared(k);
+
+      if (!d2_ok_after_split) {
+        fprintf(stderr,
+                "FATAL: Komplex_deloop broke d^2 immediately after splitting "
+                "generator C_%d[%d] with base_q=%d.\n",
+                h, split_idx, base_shift);
+        return;
+      }
+
+      reduced = true;
+      break;
+    }
+  } while (reduced);
+}
 /* ================================================================
  *  Chain Complex Verification: d² = 0
  * ================================================================ */
@@ -268,6 +449,7 @@ bool Komplex_verify_d_squared(const Komplex *k) {
     CobMatrix *composed = CobMatrix_compose(d_ip1, d_i);
     if (composed == NULL)
       continue;
+    CobMatrix_reduce(composed);
     if (!CobMatrix_isZero(composed)) {
       CobMatrix_free(composed);
       return false;
