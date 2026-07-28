@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
+#include <stdint.h>
 
 static CannedCobordism *impl_compose(const CannedCobordism *self,
                                      const CannedCobordism *other) {
@@ -505,19 +507,18 @@ static void merge_labels(int *ret_cc, int ret_nbc, int *midConComp,
 }
 
 static int genus_from_euler_data(int boundary_count, int x_value) {
-  int g = 2 - boundary_count - x_value;
+  int64_t twice_genus =
+      INT64_C(2) - (int64_t)boundary_count - (int64_t)x_value;
 
-  /*
-   * The current scanning pipeline uses genus only as bookkeeping on the
-   * formal cobordisms. When the Euler-characteristic reconstruction lands
-   * outside the valid range, we normalize instead of aborting the entire run.
-   */
-  if (g < 0)
-    g = 0;
-  if ((g & 1) != 0)
-    g--;
+  if (twice_genus < 0 || (twice_genus % INT64_C(2)) != 0 ||
+      twice_genus / INT64_C(2) > INT_MAX) {
+    fprintf(stderr,
+            "FATAL: invalid genus reconstruction: b=%d, chi=%d, 2g=%lld\n",
+            boundary_count, x_value, (long long)twice_genus);
+    abort();
+  }
 
-  return g / 2;
+  return (int)(twice_genus / INT64_C(2));
 }
 
 CannedCobordism *
@@ -696,35 +697,49 @@ CannedCobordismImpl_compose_vertical(CannedCobordismImplData *this_d,
     }
   }
 
-  /*
-  * Preserve middle-only closed components.
-  *
-  * Vertical composition can create closed components that live entirely in
-  * the glued middle boundary. These components are not incident to the
-  * resulting top or bottom boundary, so they must be carried separately as
-  * closed connected components with their dot/genus data.
-  */
+  /* Preserve components lying entirely in the glued middle. */
   for (int mi = 0; mi < mid_len; mi++) {
-    int label = midConComp[mi];
+    int label = -2 - mi;
+    bool found = false;
+    int g = 1;
 
-    if (label < -1) {
-      bool already_added = false;
+    for (int mj = 0; mj < mid_len; mj++) {
+      if (midConComp[mj] == label) {
+        found = true;
+        g++;
+      }
+    }
 
-      for (int mj = 0; mj < mi; mj++) {
-        if (midConComp[mj] == label) {
-          already_added = true;
+    if (!found)
+      continue;
+
+    for (int j = 0; j < this_d->ncc; j++) {
+      for (int k = this_d->offtop; k < this_d->offbot; k++) {
+        if (midConComp[k - this_d->offtop] == label &&
+            this_d->connectedComponent[k] == j) {
+          g += this_d->genus[j] - 1;
           break;
         }
       }
+    }
 
-      if (!already_added) {
-        int mid_idx = -2 - label;
-
-        ugenus[unconnected] = 0;
-        udots[unconnected] = mdots[mid_idx];
-        unconnected++;
+    for (int j = 0; j < cc_d->ncc; j++) {
+      for (int k = cc_d->offbot; k < cc_d->nbc; k++) {
+        if (midConComp[k - cc_d->offbot] == label &&
+            cc_d->connectedComponent[k] == j) {
+          g += cc_d->genus[j] - 1;
+          break;
+        }
       }
     }
+
+    if (g < 0) {
+      fprintf(stderr, "FATAL: invalid middle-only genus: %d\n", g);
+      abort();
+    }
+
+    ugenus[unconnected] = g;
+    udots[unconnected++] = mdots[mi];
   }
 
   int rgenus[ret->nbc + 1];
@@ -787,6 +802,22 @@ CannedCobordismImpl_compose_vertical(CannedCobordismImplData *this_d,
             for (int l = 0; l < this_d->nbc; l++)
               if (this_d->connectedComponent[l] == j)
                 x--;
+
+            int njoins = 0;
+            for (int l = 0; l < this_d->bc_sizes[j]; l++) {
+              int bc = this_d->boundaryComponents[j][l];
+              if (bc < this_d->offtop)
+                njoins += this_d->edge_sizes[bc];
+            }
+
+            if ((njoins & 1) != 0) {
+              fprintf(stderr,
+                      "FATAL: odd vertical join count: component=%d, joins=%d\n",
+                      j, njoins);
+              abort();
+            }
+
+            x -= njoins / 2;
             break;
           }
         }
