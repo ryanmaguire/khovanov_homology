@@ -176,8 +176,9 @@ LCCC *LCCC_compose(LCCC *a, LCCC *b) {
       if (ai->cobordism != NULL && bj->cobordism != NULL) {
         CannedCobordism *composed = CannedCobordism_compose(ai->cobordism, bj->cobordism);
         if (composed != NULL) {
-          int new_coeff = ai->coeff * bj->coeff;
-          lccc_add_term(result, composed, new_coeff);
+          int64_t new_coeff = (int64_t)ai->coeff * (int64_t)bj->coeff;
+          if (new_coeff > INT_MAX || new_coeff < INT_MIN) abort();
+          lccc_add_term(result, composed, (int)new_coeff);
         }
       }
       bj = bj->next;
@@ -193,14 +194,16 @@ LCCC *LCCC_multiply(LCCC *a, RingElement *coeff) {
   LCCC *result = LCCC_clone(a);
   LCCCTerm *cur = result->head;
   while (cur != NULL) {
-      cur->coeff *= coeff->value;
+      int64_t product = (int64_t)cur->coeff * (int64_t)coeff->value;
+      if (product > INT_MAX || product < INT_MIN) abort();
+      cur->coeff = (int)product;
       cur = cur->next;
   }
   return result;
 }
 
 /* ================================================================
- * The Rulebook (Bar-Natan Relations)
+ * Bar-Natan surface relations
  * ================================================================ */
 
 LCCC *LCCC_reduce(LCCC *a) {
@@ -306,7 +309,7 @@ LCCC *LCCC_reduce(LCCC *a) {
         } else {
           /*
            * Genus 0, dot 0, multiple boundary components.
-           * This is the real neck-cutting work.
+           * we expand using the neck-cutting relation.
            */
           more_work[nmore++] = ci;
         }

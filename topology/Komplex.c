@@ -144,7 +144,7 @@ bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
       cur = cur->next;
     }
   }
-  /* The oracle guarantees this is an isomorphism, but verify */
+  /* Verify that the selected pivot is an invertible term. */
   if (!is_isomorphism(phi))
     return false;
   if (!pivot_preserves_q(D, source_col, target_row))
@@ -189,11 +189,9 @@ bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
         continue;
       }
       /*
-       * Over F_2, subtraction = addition, so:
-       * D[i][j] -= correction  ≡  D[i][j] += correction
-       *
-       * Use LCCC_negate for generality (identity over F_2).
-       */
+      * Over Z, subtraction is implemented by adding the negated correction:
+      * D[i][j] -= correction.
+      */
       LCCC *neg_correction = LCCC_negate(correction);
       CobMatrix_addEntry(D, i, j, neg_correction);
       LCCC_free(correction);
