@@ -1,9 +1,55 @@
 #include "IntegerMatrix.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+
+static void integerMatrixFatal(const char* message) {
+    fprintf(stderr, "FATAL: IntegerMatrix: %s\n", message);
+    abort();
+}
+
+static int64_t checkedAdd(int64_t a, int64_t b) {
+    if ((b > 0 && a > INT64_MAX - b) ||
+        (b < 0 && a < INT64_MIN - b)) {
+        integerMatrixFatal("int64_t addition overflow");
+    }
+    return a + b;
+}
+
+static int64_t checkedMul(int64_t a, int64_t b) {
+    if (a == 0 || b == 0) return 0;
+
+    if (a > 0) {
+        if (b > 0) {
+            if (a > INT64_MAX / b) {
+                integerMatrixFatal("int64_t multiplication overflow");
+            }
+        } else {
+            if (b < INT64_MIN / a) {
+                integerMatrixFatal("int64_t multiplication overflow");
+            }
+        }
+    } else {
+        if (b > 0) {
+            if (a < INT64_MIN / b) {
+                integerMatrixFatal("int64_t multiplication overflow");
+            }
+        } else {
+            if (b < INT64_MAX / a) {
+                integerMatrixFatal("int64_t multiplication overflow");
+            }
+        }
+    }
+
+    return a * b;
+}
+
 /* * Allocates memory for the matrix structure and its internal 2D grid.
  * Initializes tracking pointers and links to NULL.
  */
 Mat* createMat(int rows, int cols) {
+    if (rows < 0 || cols < 0) return NULL;
+
     Mat* m = (Mat*)malloc(sizeof(Mat));
     if (!m) return NULL;
     
@@ -11,10 +57,23 @@ Mat* createMat(int rows, int cols) {
     m->cols = cols;
     
     // Allocate array of pointers for rows using 64-bit type
-    m->matrix = (int64_t**)malloc(rows * sizeof(int64_t*));
+    m->matrix = (int64_t**)malloc((size_t)rows * sizeof(int64_t*));
+    if (rows > 0 && !m->matrix) {
+        free(m);
+        return NULL;
+    }
+
     for (int i = 0; i < rows; i++) {
         // Allocate and zero-initialize columns for each row
-        m->matrix[i] = (int64_t*)calloc(cols, sizeof(int64_t));
+        m->matrix[i] = (int64_t*)calloc((size_t)cols, sizeof(int64_t));
+        if (cols > 0 && !m->matrix[i]) {
+            for (int j = 0; j < i; j++) {
+                free(m->matrix[j]);
+            }
+            free(m->matrix);
+            free(m);
+            return NULL;
+        }
     }
     
     m->prev = NULL;
@@ -118,28 +177,38 @@ void swapcols(Mat* m, int col1, int col2) {
 /* Low-level operation: Row Addition -> Row(a) = Row(a) + n * Row(b) */
 void addRow2(Mat* m, int a, int b, int64_t n) {
     for (int i = 0; i < m->cols; i++) {
-        m->matrix[a][i] += (m->matrix[b][i] * n);
+        int64_t product = checkedMul(m->matrix[b][i], n);
+        m->matrix[a][i] = checkedAdd(m->matrix[a][i], product);
     }
 }
 
 /* Low-level operation: Column Addition -> Col(a) = Col(a) + n * Col(b) */
 void addColumn2(Mat* m, int a, int b, int64_t n) {
     for (int i = 0; i < m->rows; i++) {
-        m->matrix[i][a] += (m->matrix[i][b] * n);
+        int64_t product = checkedMul(m->matrix[i][b], n);
+        m->matrix[i][a] = checkedAdd(m->matrix[i][a], product);
     }
 }
 
 /* Low-level operation: Multiplies a row by a scalar factor */
 void multRow2(Mat* m, int a, int64_t n) {
+    if (n != 1 && n != -1) {
+        integerMatrixFatal("non-unimodular row scaling");
+    }
+
     for (int i = 0; i < m->cols; i++) {
-        m->matrix[a][i] *= n;
+        m->matrix[a][i] = checkedMul(m->matrix[a][i], n);
     }
 }
 
 /* Low-level operation: Multiplies a column by a scalar factor */
 void multColumn2(Mat* m, int a, int64_t n) {
+    if (n != 1 && n != -1) {
+        integerMatrixFatal("non-unimodular column scaling");
+    }
+
     for (int i = 0; i < m->rows; i++) {
-        m->matrix[i][a] *= n;
+        m->matrix[i][a] = checkedMul(m->matrix[i][a], n);
     }
 }
 
