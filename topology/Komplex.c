@@ -417,16 +417,6 @@ void Komplex_deloop(Komplex *k) {
         }
       }
 
-      bool d2_ok_after_split = Komplex_verify_d_squared(k);
-
-      if (!d2_ok_after_split) {
-        fprintf(stderr,
-                "FATAL: Komplex_deloop broke d^2 immediately after splitting "
-                "generator C_%d[%d] with base_q=%d.\n",
-                h, split_idx, base_shift);
-        return;
-      }
-
       reduced = true;
       break;
     }

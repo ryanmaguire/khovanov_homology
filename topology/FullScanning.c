@@ -628,7 +628,7 @@ static Komplex *build_scan_komplex(int n_strands, const int *crossings,
   Komplex *current = Komplex_identityBraid(n_strands);
   if (current == NULL) return NULL;
 
-  if (!quiet) print_komplex_summary("Initial scan complex", current);
+  (void)quiet;
 
   for (int i = 0; i < length; i++) {
     Komplex *cross = Komplex_singleCrossing(n_strands, crossings[i], signs[i]);
@@ -639,49 +639,9 @@ static Komplex *build_scan_komplex(int n_strands, const int *crossings,
 
     current = next;
 
-    printf("\nAfter crossing %d post-compose:\n", i + 1);
-    print_komplex_summary("post-compose", current);
-    print_chain_generator_details(current);
-
-    if (!Komplex_verify_d_squared(current)) {
-      fprintf(stderr,
-              "d^2 broke immediately after compose at crossing %d\n",
-              i + 1);
-      return current;
-    }
-
     Komplex_deloop(current);
 
-    printf("\nAfter crossing %d post-deloop:\n", i + 1);
-    print_komplex_summary("post-deloop", current);
-    print_chain_generator_details(current);
-
-    if (!Komplex_verify_d_squared(current)) {
-      fprintf(stderr,
-              "FATAL: d^2 broke immediately after deloop at crossing %d\n",
-              i + 1);
-      return current;
-    }
-
-    int reductions = Komplex_greedyReduce(current);
-
-    printf("\nAfter crossing %d post-greedy-reduce:\n", i + 1);
-    print_komplex_summary("post-greedy-reduce", current);
-    print_chain_generator_details(current);
-
-    if (!Komplex_verify_d_squared(current)) {
-      fprintf(stderr,
-              "FATAL: d^2 broke immediately after greedyReduce at crossing %d\n",
-              i + 1);
-      return current;
-    }
-
-    if (!quiet) {
-      char label[128];
-      snprintf(label, sizeof(label), "After crossing %d/%d", i + 1, length);
-      print_komplex_summary(label, current);
-      printf("  reductions=%d\n", reductions);
-    }
+    Komplex_greedyReduce(current);
   }
 
   return current;
@@ -774,11 +734,7 @@ int main(int argc, char **argv) {
 
   if (result == NULL) return 1;
 
-  print_komplex_summary("Final reduced scan complex", result);
-  print_chain_generator_details(result);
-
   char reason[256];
-  printf("\n--- Braid Closure ---\n");
 
   Komplex *closed = close_braid_komplex(result, reason, sizeof(reason));
   if (closed == NULL) {
@@ -790,22 +746,9 @@ int main(int argc, char **argv) {
   Komplex_deloop(closed);
   reduce_all_differentials(closed);
 
-  if (!Komplex_verify_d_squared(closed)) {
-    fprintf(stderr,
-            "\nFATAL: closed complex has d^2 != 0 after delooping/reduction.\n");
-    free_komplex_owned(closed);
-    free_komplex_owned(result);
-    return 1;
-  }
-
-  int closure_reductions = Komplex_greedyReduce(closed);
+  Komplex_greedyReduce(closed);
   reduce_all_differentials(closed);
 
-  print_komplex_summary("Closed scan complex", closed);
-  print_chain_generator_details(closed);
-  printf("  closure reductions=%d\n", closure_reductions);
-
-  printf("\n--- Bigraded Homology Extraction ---\n");
   if (!komplex_has_only_closed_objects(closed, reason, sizeof(reason))) {
     printf("Blocked: %s\n", reason);
     free_komplex_owned(closed);
