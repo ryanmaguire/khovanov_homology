@@ -52,71 +52,15 @@ bool SmoothingColumn_equals(SmoothingColumn *a, SmoothingColumn *b) {
   return true;
 }
 
-static int count_nonzero_entries(const CobMatrix *m) {
-  int count = 0;
-  if (m == NULL) return 0;
-  for (int row = 0; row < m->target->n; row++) {
-    MatrixEntry *entry = m->entries[row].head;
-    while (entry != NULL) {
-      if (entry->value != NULL && !LCCC_isZero(entry->value)) count++;
-      entry = entry->next;
-    }
-  }
-  return count;
-}
+static int quantum_key(const Komplex *k, int h, int idx) {
+  if (k == NULL || h < 0 || h >= k->length)
+    return 0;
 
-static void print_chain_sizes(const Komplex *k) {
-  printf("Chain groups:");
-  for (int i = 0; i < k->length; i++) {
-    int size = (k->chain_groups[i] != NULL) ? k->chain_groups[i]->n : 0;
-    printf(" C_%d=%d", i, size);
-  }
-  printf("\n");
-}
+  SmoothingColumn *col = k->chain_groups[h];
+  if (col == NULL || col->numbers == NULL || idx < 0 || idx >= col->n)
+    return 0;
 
-static int quantum_key(const Komplex *k, int h, int idx);
-
-static void print_differential_sizes(const Komplex *k) {
-  printf("Differentials:");
-  if (k->length <= 1) {
-    printf(" none\n");
-    return;
-  }
-  for (int i = 0; i < k->length - 1; i++) {
-    CobMatrix *d = k->differentials[i];
-    int nnz = count_nonzero_entries(d);
-    printf(" d_%d=%d", i, nnz);
-  }
-  printf("\n");
-}
-
-static void print_komplex_summary(const char *label, const Komplex *k) {
-  bool d_squared = Komplex_verify_d_squared(k);
-  printf("%s\n", label);
-  printf("  length=%d\n", k->length);
-  print_chain_sizes(k);
-  print_differential_sizes(k);
-  printf("  d^2=0: %s\n", d_squared ? "yes" : "no");
-}
-
-static void print_chain_generator_details(const Komplex *k) {
-  printf("Generator summary:\n");
-  for (int h = 0; h < k->length; h++) {
-    SmoothingColumn *col = k->chain_groups[h];
-    if (col == NULL) {
-      printf("  C_%d: none\n", h);
-      continue;
-    }
-    printf("  C_%d:", h);
-    for (int i = 0; i < col->n; i++) {
-      Cap *cap = col->smoothings[i];
-      int boundary = cap ? cap->n : -1;
-      int cycles = cap ? cap->ncycles : -1;
-      int q = (col->numbers != NULL) ? col->numbers[i] : 0;
-      printf(" g%d[q=%d,b=%d,c=%d]", i, q, boundary, cycles);
-    }
-    printf("\n");
-  }
+  return col->numbers[idx];
 }
 
 static void free_smoothing_column_owned(SmoothingColumn *col) {
@@ -504,13 +448,122 @@ static int smith_rank(Mat *m) {
   }
   return rank;
 }
+static int run_torsion_regression_test(void) {
+  int ok = 1;
+  Mat *A = NULL;
+  Mat *B = NULL;
+  Mat *Acopy = NULL;
+  Mat *Bcopy = NULL;
 
-static Mat *convert_CobMatrix_to_IntegerMatrix(const Komplex *k, int h,
-                                               CobMatrix *cob_diff,
-                                               char *reason,
-                                               size_t reason_size,
-                                               bool *q_preserving) {
-  (void)k;
+  A = createMat(2, 1);
+  B = createMat(1, 2);
+  if (A == NULL || B == NULL) { ok = 0; goto cleanup; }
+
+  A->matrix[0][0] = 2;
+  A->matrix[1][0] = -2;
+  B->matrix[0][0] = 1;
+  B->matrix[0][1] = 1;
+
+  if (B->matrix[0][0] * A->matrix[0][0] +
+      B->matrix[0][1] * A->matrix[1][0] != 0) {
+    ok = 0;
+    goto cleanup;
+  }
+
+  Bcopy = createMat(1, 2);
+  Acopy = createMat(2, 1);
+  if (Bcopy == NULL || Acopy == NULL) { ok = 0; goto cleanup; }
+  for (int i = 0; i < 1; i++)
+    for (int j = 0; j < 2; j++) Bcopy->matrix[i][j] = B->matrix[i][j];
+  for (int i = 0; i < 2; i++)
+    for (int j = 0; j < 1; j++) Acopy->matrix[i][j] = A->matrix[i][j];
+
+  toSmithForm(Bcopy);
+  int rank_out = smith_rank(Bcopy);
+  toSmithForm(Acopy);
+  int rank_in = smith_rank(Acopy);
+
+  int torsion_count = 0;
+  int64_t torsion_value = 0;
+  int diag = Acopy->rows < Acopy->cols ? Acopy->rows : Acopy->cols;
+  for (int i = 0; i < diag; i++) {
+    int64_t d = Acopy->matrix[i][i];
+    if (d > 1 || d < -1) {
+      torsion_value = llabs((long long)d);
+      torsion_count++;
+    }
+  }
+
+  int hom_rank = 2 - rank_out - rank_in;
+
+  if (rank_out != 1 || rank_in != 1 || torsion_count != 1 ||
+      torsion_value != 2 || hom_rank != 0)
+    ok = 0;
+
+cleanup:
+  freeMat(A);
+  freeMat(B);
+  freeMat(Acopy);
+  freeMat(Bcopy);
+  return ok;
+}
+
+static int q_chain_rank(const Komplex *k, int h, int q) {
+  if (k == NULL || h < 0 || h >= k->length ||
+      k->chain_groups[h] == NULL)
+    return 0;
+
+  int rank = 0;
+  for (int i = 0; i < k->chain_groups[h]->n; i++) {
+    if (quantum_key(k, h, i) == q)
+      rank++;
+  }
+  return rank;
+}
+
+static Mat *build_q_slice(const Komplex *k, Mat *full_diff, int h, int q,
+                          char *reason, size_t reason_size) {
+  int source_rank = q_chain_rank(k, h, q);
+  int target_rank = q_chain_rank(k, h + 1, q);
+
+  if (source_rank <= 0 || target_rank <= 0) {
+    snprintf(reason, reason_size,
+             "Internal error: requested an empty q-slice for d_%d at q=%d.",
+             h, q);
+    return NULL;
+  }
+
+  Mat *sub = createMat(target_rank, source_rank);
+  if (sub == NULL) {
+    snprintf(reason, reason_size,
+             "Out of memory while building the q-slice of d_%d at q=%d.",
+             h, q);
+    return NULL;
+  }
+
+  int sub_col = 0;
+  for (int c = 0; c < k->chain_groups[h]->n; c++) {
+    if (quantum_key(k, h, c) != q)
+      continue;
+
+    int sub_row = 0;
+    for (int r = 0; r < k->chain_groups[h + 1]->n; r++) {
+      if (quantum_key(k, h + 1, r) != q)
+        continue;
+
+      sub->matrix[sub_row][sub_col] = full_diff->matrix[r][c];
+      sub_row++;
+    }
+    sub_col++;
+  }
+
+  return sub;
+}
+
+static Mat *convert_CobMatrix_to_IntegerMatrix(int h, CobMatrix *cob_diff,
+                                                char *reason,
+                                                size_t reason_size,
+                                                bool *q_preserving) {
   if (cob_diff == NULL || cob_diff->source == NULL || cob_diff->target == NULL) {
     snprintf(reason, reason_size, "Cannot convert a NULL cobordism matrix.");
     return NULL;
@@ -575,7 +628,7 @@ static void print_braid_word(const int *crossings, const bool *signs, int length
 static void print_scan_poincare(const int *free_ranks, int h_count, int min_q,
                                 int max_q, int n_plus, int n_minus,
                                 const int *torsion_counts,
-                                const int *torsion_values,
+                                const int64_t *torsion_values,
                                 int max_torsion_per_cell) {
   bool first = true;
   int q_count = max_q - min_q + 1;
@@ -599,7 +652,8 @@ static void print_scan_poincare(const int *free_ranks, int h_count, int min_q,
       for (int i = 0; i < torsion_counts[idx]; i++) {
         if (!first) printf(" + ");
         first = false;
-        printf("Z_%d", torsion_values[idx * max_torsion_per_cell + i]);
+        printf("Z_%lld",
+               (long long)torsion_values[idx * max_torsion_per_cell + i]);
         printf("q^%d", true_q);
         if (true_h != 0) printf("t^%d", true_h);
       }
@@ -610,25 +664,10 @@ static void print_scan_poincare(const int *free_ranks, int h_count, int min_q,
   printf("\n");
 }
 
-static int quantum_key(const Komplex *k, int h, int idx) {
-  (void)h;
-
-  if (k == NULL || h < 0 || h >= k->length)
-    return 0;
-
-  SmoothingColumn *col = k->chain_groups[h];
-  if (col == NULL || col->numbers == NULL || idx < 0 || idx >= col->n)
-    return 0;
-
-  return col->numbers[idx];
-}
-
 static Komplex *build_scan_komplex(int n_strands, const int *crossings,
-                                   const bool *signs, int length, bool quiet) {
+                                   const bool *signs, int length) {
   Komplex *current = Komplex_identityBraid(n_strands);
   if (current == NULL) return NULL;
-
-  (void)quiet;
 
   for (int i = 0; i < length; i++) {
     Komplex *cross = Komplex_singleCrossing(n_strands, crossings[i], signs[i]);
@@ -648,17 +687,18 @@ static Komplex *build_scan_komplex(int n_strands, const int *crossings,
 }
 
 int main(int argc, char **argv) {
+  if (!run_torsion_regression_test()) {
+    fprintf(stderr, "torsion regression test failed\n");
+    return 3;
+  }
   int n_strands = 0;
   int *crossings = NULL;
   bool *signs = NULL;
   int length = 0;
-  bool quiet = false;
-
   int strand_count = 2;
   int start = 1;
   while (start < argc) {
     if (strcmp(argv[start], "--quiet") == 0) {
-      quiet = true;
       start++;
       continue;
     }
@@ -728,7 +768,7 @@ int main(int argc, char **argv) {
   printf("Scanning Khovanov harness\n");
   print_braid_word(crossings, signs, length);
 
-  Komplex *result = build_scan_komplex(n_strands, crossings, signs, length, quiet);
+  Komplex *result = build_scan_komplex(n_strands, crossings, signs, length);
   free(crossings);
   free(signs);
 
@@ -771,8 +811,7 @@ int main(int argc, char **argv) {
   bool q_preserving = true;
   for (int i = 0; i < closed->length - 1; i++) {
     full_diffs[i] = convert_CobMatrix_to_IntegerMatrix(
-        closed, i, closed->differentials[i], reason, sizeof(reason),
-        &q_preserving);
+        i, closed->differentials[i], reason, sizeof(reason), &q_preserving);
     if (full_diffs[i] == NULL) {
       ok = false;
       break;
@@ -787,9 +826,12 @@ int main(int argc, char **argv) {
   } else {
     int min_q = 10000;
     int max_q = -10000;
-    const int max_torsion_per_cell = 16;
+    int max_torsion_per_cell = 1;
 
     for (int h = 0; h < closed->length; h++) {
+      if (closed->chain_groups[h] != NULL &&
+          closed->chain_groups[h]->n > max_torsion_per_cell)
+        max_torsion_per_cell = closed->chain_groups[h]->n;
       if (!closed->chain_groups[h]) continue;
       for (int i = 0; i < closed->chain_groups[h]->n; i++) {
         int q = quantum_key(closed, h, i);
@@ -805,9 +847,10 @@ int main(int argc, char **argv) {
       int cell_count = closed->length * q_count;
       int *free_ranks = (int *)calloc((size_t)cell_count, sizeof(int));
       int *torsion_counts = (int *)calloc((size_t)cell_count, sizeof(int));
-      int *poincare_torsion_values =
-          (int *)calloc((size_t)cell_count * (size_t)max_torsion_per_cell,
-                        sizeof(int));
+      int64_t *poincare_torsion_values =
+          (int64_t *)calloc(
+              (size_t)cell_count * (size_t)max_torsion_per_cell,
+              sizeof(int64_t));
 
       if (free_ranks == NULL || torsion_counts == NULL ||
           poincare_torsion_values == NULL) {
@@ -838,147 +881,128 @@ int main(int argc, char **argv) {
         if (!has_q) continue;
 
         for (int h = 0; h < closed->length; h++) {
-          int chain_rank = 0;
-          if (closed->chain_groups[h]) {
-            for (int i = 0; i < closed->chain_groups[h]->n; i++) {
-              if (quantum_key(closed, h, i) == q) chain_rank++;
+          int chain_rank = q_chain_rank(closed, h, q);
+          if (chain_rank == 0)
+            continue;
+
+          int source_rank = q_chain_rank(closed, h - 1, q);
+          int target_rank = q_chain_rank(closed, h + 1, q);
+          int cell_idx = h * q_count + (q - min_q);
+
+          Mat *incoming = NULL;
+          Mat *outgoing = NULL;
+
+          if (source_rank > 0) {
+            incoming = build_q_slice(closed, full_diffs[h - 1], h - 1, q,
+                                     reason, sizeof(reason));
+            if (incoming == NULL) {
+              printf("Blocked: %s\n", reason);
+              ok = false;
+              break;
             }
           }
 
-          if (chain_rank == 0) continue;
+          if (target_rank > 0) {
+            outgoing = build_q_slice(closed, full_diffs[h], h, q,
+                                     reason, sizeof(reason));
+            if (outgoing == NULL) {
+              printf("Blocked: %s\n", reason);
+              freeMat(incoming);
+              ok = false;
+              break;
+            }
+          }
 
           int rank_out = 0;
-          if (h < closed->length - 1 && full_diffs[h] != NULL) {
-            int target_rank = 0;
-            if (closed->chain_groups[h + 1]) {
-              for (int i = 0; i < closed->chain_groups[h + 1]->n; i++) {
-                if (quantum_key(closed, h + 1, i) == q) target_rank++;
-              }
-            }
-
-            if (target_rank > 0) {
-              Mat *sub = createMat(target_rank, chain_rank);
-              if (sub == NULL) {
-                printf("Blocked: out of memory while building outgoing q-slice.\n");
-                ok = false;
-                break;
-              }
-
-              int sub_col = 0;
-              for (int c = 0; c < closed->chain_groups[h]->n; c++) {
-                if (quantum_key(closed, h, c) == q) {
-                  int sub_row = 0;
-                  for (int r = 0; r < closed->chain_groups[h + 1]->n; r++) {
-                    if (quantum_key(closed, h + 1, r) == q) {
-                      sub->matrix[sub_row][sub_col] =
-                          full_diffs[h]->matrix[r][c];
-                      sub_row++;
-                    }
-                  }
-                  sub_col++;
-                }
-              }
-
-              toSmithForm(sub);
-              rank_out = smith_rank(sub);
-              freeMat(sub);
-            }
-          }
-
-          if (!ok) break;
-
           int rank_in = 0;
           int torsion_count = 0;
-          int cell_torsion_values[16] = {0};
 
-          if (h > 0 && full_diffs[h - 1] != NULL) {
-            int src_rank = 0;
-            if (closed->chain_groups[h - 1]) {
-              for (int i = 0; i < closed->chain_groups[h - 1]->n; i++) {
-                if (quantum_key(closed, h - 1, i) == q) src_rank++;
+          if (outgoing != NULL) {
+            toSmithForm(outgoing);
+            if (!isDiag(outgoing)) {
+              printf("Blocked: failed to diagonalize outgoing q-slice at h=%d, q=%d.\n",
+                     h, q);
+              freeMat(outgoing);
+              freeMat(incoming);
+              ok = false;
+              break;
+            }
+            rank_out = smith_rank(outgoing);
+          }
+
+          if (incoming != NULL) {
+            toSmithForm(incoming);
+            if (!isDiag(incoming)) {
+              printf("Blocked: failed to diagonalize incoming q-slice at h=%d, q=%d.\n",
+                     h, q);
+              freeMat(outgoing);
+              freeMat(incoming);
+              ok = false;
+              break;
+            }
+
+            rank_in = smith_rank(incoming);
+            int diag = incoming->rows < incoming->cols
+                           ? incoming->rows
+                           : incoming->cols;
+
+            for (int i = 0; i < diag; i++) {
+              int64_t value = incoming->matrix[i][i];
+              if (value < 0) value = -value;
+
+              if (value > 1) {
+                if (torsion_count >= max_torsion_per_cell) {
+                  printf("Blocked: torsion-storage bound exceeded at h=%d, q=%d.\n",
+                         h, q);
+                  ok = false;
+                  break;
+                }
+
+                poincare_torsion_values[
+                    cell_idx * max_torsion_per_cell + torsion_count] = value;
+                torsion_count++;
               }
             }
 
-            if (src_rank > 0) {
-              Mat *sub = createMat(chain_rank, src_rank);
-              if (sub == NULL) {
-                printf("Blocked: out of memory while building incoming q-slice.\n");
-                ok = false;
-                break;
-              }
-
-              int sub_col = 0;
-              for (int c = 0; c < closed->chain_groups[h - 1]->n; c++) {
-                if (quantum_key(closed, h - 1, c) == q) {
-                  int sub_row = 0;
-                  for (int r = 0; r < closed->chain_groups[h]->n; r++) {
-                    if (quantum_key(closed, h, r) == q) {
-                      sub->matrix[sub_row][sub_col] =
-                          full_diffs[h - 1]->matrix[r][c];
-                      sub_row++;
-                    }
-                  }
-                  sub_col++;
-                }
-              }
-
-              toSmithForm(sub);
-              rank_in = smith_rank(sub);
-
-              /*
-               * Torsion from SNF(d_{h-1}) is valid only when d_h is zero
-               * on this q-slice. Otherwise homology is ker(d_h) / im(d_{h-1}),
-               * and we need to restrict d_{h-1} to a basis for ker(d_h).
-               */
-              if (rank_out == 0) {
-                for (int i = 0; i < sub->rows && i < sub->cols; i++) {
-                  int64_t diag = sub->matrix[i][i];
-                  if (diag > 1 || diag < -1) {
-                    if (torsion_count < max_torsion_per_cell) {
-                      cell_torsion_values[torsion_count++] =
-                          (int)llabs((long long)diag);
-                    }
-                  }
-                }
-              }
-
-              freeMat(sub);
+            if (!ok) {
+              freeMat(outgoing);
+              freeMat(incoming);
+              break;
             }
           }
 
-          if (!ok) break;
-
           int hom_rank = chain_rank - rank_out - rank_in;
-          bool torsion_safe = (rank_out == 0);
-          int cell_idx = h * q_count + (q - min_q);
+          if (hom_rank < 0) {
+            printf("Blocked: computed a negative homology rank at h=%d, q=%d.\n",
+                   h, q);
+            freeMat(outgoing);
+            freeMat(incoming);
+            ok = false;
+            break;
+          }
 
           /* THE TRUE KHOVANOV SHIFT */
           int true_h = h - n_minus;
           int true_q = q + n_plus - n_minus;
 
           free_ranks[cell_idx] = hom_rank;
-          torsion_counts[cell_idx] = torsion_safe ? torsion_count : 0;
-          for (int i = 0; i < torsion_count && i < max_torsion_per_cell; i++) {
-            poincare_torsion_values[cell_idx * max_torsion_per_cell + i] =
-                cell_torsion_values[i];
-          }
+          torsion_counts[cell_idx] = torsion_count;
 
           if (hom_rank > 0) {
             printf("rank H^{%d, %d} = %d\n", true_h, true_q, hom_rank);
-          } else if (hom_rank == 0 && torsion_count == 0) {
+          } else if (torsion_count == 0) {
             printf("rank H^{%d, %d} = 0\n", true_h, true_q);
           }
 
-          if (torsion_safe) {
-            for (int i = 0; i < torsion_count; i++) {
-              printf("torsion H^{%d, %d} = Z_%d\n", true_h, true_q,
-                     cell_torsion_values[i]);
-            }
-          } else if (torsion_count > 0) {
-            printf("torsion H^{%d, %d}: suppressed; outgoing differential is "
-                   "nonzero, so SNF(d_in) alone is not valid here.\n",
-                   true_h, true_q);
+          for (int i = 0; i < torsion_count; i++) {
+            int64_t value = poincare_torsion_values[
+                cell_idx * max_torsion_per_cell + i];
+            printf("torsion H^{%d, %d} = Z_%lld\n",
+                   true_h, true_q, (long long)value);
           }
+
+          freeMat(outgoing);
+          freeMat(incoming);
         }
 
         if (!ok) break;
