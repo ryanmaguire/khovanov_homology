@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 
+//
 static void integerMatrixFatal(const char* message) {
     fprintf(stderr, "FATAL: IntegerMatrix: %s\n", message);
     abort();
