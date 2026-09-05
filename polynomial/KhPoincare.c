@@ -398,8 +398,15 @@ BivariatePoly *kh_poincare_with_torsion(const Knot *knot, KhTorsionReport *tors)
     if (!knot || knot->m < 0)
         return empty;
     if (knot->m == 0) {
-        /* unknot-like empty diagram: return empty; caller may special-case */
-        return empty;
+        /* Unknot: single circle, generators in quantum degrees ±1 at r = 0.
+         * Kh = q^{-1} + q  (report / Knot Atlas convention). */
+        bp_free(empty);
+        BivariatePoly *unknot = bp_create();
+        if (unknot) {
+            bp_add_term(unknot, -1, 0, 1);
+            bp_add_term(unknot, 1, 0, 1);
+        }
+        return unknot;
     }
     if (knot->m > 16) {
         fprintf(stderr, "KhPoincare: m=%d exceeds full-cube limit (16)\n", knot->m);
