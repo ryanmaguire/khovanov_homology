@@ -1,4 +1,5 @@
 #include "TangleKomplex.h"
+#include "PDScanner.h"
 #include "Komplex.h"
 #include "Cap.h"
 #include "LCCC.h"
@@ -696,6 +697,16 @@ int main(int argc, char **argv) {
   bool *signs = NULL;
   int length = 0;
   int strand_count = 2;
+  int n_plus = 0;
+  int n_minus = 0;
+  bool pd_mode = false;
+  bool pd_reorder = true;
+  bool pd_verify_d_squared = true;
+  bool javakh_signs = false;
+  const char *pd_text = NULL;
+  const char *pd_sign_text = NULL;
+  char reason[256];
+
   int start = 1;
   while (start < argc) {
     if (strcmp(argv[start], "--quiet") == 0) {
@@ -710,77 +721,141 @@ int main(int argc, char **argv) {
       continue;
     }
 
+    if (strcmp(argv[start], "--pd") == 0) {
+      if (start + 1 >= argc) return 2;
+      pd_mode = true;
+      pd_text = argv[start + 1];
+      start += 2;
+      continue;
+    }
+
+    if (strcmp(argv[start], "--signs") == 0) {
+      if (start + 1 >= argc) return 2;
+      pd_sign_text = argv[start + 1];
+      start += 2;
+      continue;
+    }
+
+    if (strcmp(argv[start], "--javakh-signs") == 0) {
+      javakh_signs = true;
+      start++;
+      continue;
+    }
+
+    if (strcmp(argv[start], "--no-reorder") == 0) {
+      pd_reorder = false;
+      start++;
+      continue;
+    }
+
+    if (strcmp(argv[start], "--no-d2-check") == 0) {
+      pd_verify_d_squared = false;
+      start++;
+      continue;
+    }
+
     break;
   }
 
-  n_strands = strand_count;
+  Komplex *result = NULL;
+  Komplex *closed = NULL;
 
-  if (start >= argc) {
-    length = 3;
-    n_strands = 2;
-    crossings = (int *)malloc(3 * sizeof(int));
-    signs = (bool *)malloc(3 * sizeof(bool));
-    if (crossings == NULL || signs == NULL) {
-      free(crossings);
-      free(signs);
-      return 1;
+  if (pd_mode) {
+    if (pd_text == NULL || start != argc) {
+      fprintf(stderr,
+              "PD mode accepts the diagram through --pd and does not accept braid generators.\n");
+      return 2;
     }
 
-    for (int i = 0; i < 3; i++) {
-      crossings[i] = 0;
-      signs[i] = false;
+    PDDiagram diagram;
+    if (!PDDiagram_parse(&diagram, pd_text, pd_sign_text, javakh_signs,
+                         reason, sizeof(reason))) {
+      fprintf(stderr, "Invalid PD: %s\n", reason);
+      return 2;
+    }
+
+    for (int i = 0; i < diagram.crossing_count; i++) {
+      if (diagram.signs[i] > 0)
+        n_plus++;
+      else
+        n_minus++;
+    }
+
+    printf("Scanning Khovanov harness (planar diagram)\n");
+    printf("Crossings: %d\n", diagram.crossing_count);
+
+    closed = PDScanner_build(&diagram, pd_reorder, pd_verify_d_squared,
+                             reason, sizeof(reason));
+    PDDiagram_free(&diagram);
+    if (closed == NULL) {
+      fprintf(stderr, "Blocked: %s\n", reason);
+      return 1;
     }
   } else {
-    length = argc - start;
-    crossings = (int *)malloc((size_t)length * sizeof(int));
-    signs = (bool *)malloc((size_t)length * sizeof(bool));
-    if (crossings == NULL || signs == NULL) {
-      free(crossings);
-      free(signs);
-      return 1;
+    n_strands = strand_count;
+
+    if (start >= argc) {
+      length = 3;
+      n_strands = 2;
+      crossings = (int *)malloc(3 * sizeof(int));
+      signs = (bool *)malloc(3 * sizeof(bool));
+      if (crossings == NULL || signs == NULL) {
+        free(crossings);
+        free(signs);
+        return 1;
+      }
+
+      for (int i = 0; i < 3; i++) {
+        crossings[i] = 0;
+        signs[i] = false;
+      }
+    } else {
+      length = argc - start;
+      crossings = (int *)malloc((size_t)length * sizeof(int));
+      signs = (bool *)malloc((size_t)length * sizeof(bool));
+      if (crossings == NULL || signs == NULL) {
+        free(crossings);
+        free(signs);
+        return 1;
+      }
+
+      for (int i = 0; i < length; i++) {
+        int generator = atoi(argv[start + i]);
+        int abs_generator = generator > 0 ? generator : -generator;
+
+        if (generator == 0 || abs_generator >= n_strands) {
+          fprintf(stderr,
+                  "Invalid braid generator %d for %d strands.\n",
+                  generator, n_strands);
+          free(crossings);
+          free(signs);
+          return 2;
+        }
+
+        crossings[i] = abs_generator - 1;
+        signs[i] = generator > 0;
+      }
     }
 
     for (int i = 0; i < length; i++) {
-      int generator = atoi(argv[start + i]);
-      int abs_generator = generator > 0 ? generator : -generator;
-
-      if (generator == 0 || abs_generator >= n_strands) {
-        fprintf(stderr,
-                "Invalid braid generator %d for %d strands.\n",
-                generator, n_strands);
-        free(crossings);
-        free(signs);
-        return 2;
-      }
-
-      crossings[i] = abs_generator - 1;
-      signs[i] = generator > 0;
+      if (signs[i]) n_plus++;
+      else n_minus++;
     }
-  }
 
-  int n_plus = 0;
-  int n_minus = 0;
-  for (int i = 0; i < length; i++) {
-    if (signs[i]) n_plus++;
-    else n_minus++;
-  }
+    printf("Scanning Khovanov harness (braid)\n");
+    print_braid_word(crossings, signs, length);
 
-  printf("Scanning Khovanov harness\n");
-  print_braid_word(crossings, signs, length);
+    result = build_scan_komplex(n_strands, crossings, signs, length);
+    free(crossings);
+    free(signs);
+    if (result == NULL) return 1;
 
-  Komplex *result = build_scan_komplex(n_strands, crossings, signs, length);
-  free(crossings);
-  free(signs);
-
-  if (result == NULL) return 1;
-
-  char reason[256];
-
-  Komplex *closed = close_braid_komplex(result, reason, sizeof(reason));
-  if (closed == NULL) {
-    printf("Blocked: %s\n", reason);
-    free_komplex_owned(result);
-    return 1;
+    closed = close_braid_komplex(result, reason, sizeof(reason));
+    if (closed == NULL) {
+      printf("Blocked: %s\n", reason);
+      free_komplex_owned(result);
+      return 1;
+    }
   }
 
   Komplex_deloop(closed);
