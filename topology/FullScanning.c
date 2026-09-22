@@ -3,7 +3,8 @@
 #include "Komplex.h"
 #include "Cap.h"
 #include "LCCC.h"
-#include "../IntegerMatrix.h" 
+#include "../IntegerMatrix.h"
+#include "../polynomial/BivariatePoly.h"
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -109,7 +110,7 @@ static Cap *clone_cap(const Cap *cap) {
 }
 
 static bool komplex_boundary_size(const Komplex *k, int *boundary_size,
-                                  char *reason, size_t reason_size) {
+  char *reason, size_t reason_size) {
   int boundary = -1;
   for (int h = 0; h < k->length; h++) {
     SmoothingColumn *col = k->chain_groups[h];
@@ -119,15 +120,15 @@ static bool komplex_boundary_size(const Komplex *k, int *boundary_size,
       Cap *cap = col->smoothings[i];
       if (cap == NULL) {
         snprintf(reason, reason_size,
-                 "Generator C_%d[%d] has no smoothing object.", h, i);
+          "Generator C_%d[%d] has no smoothing object.", h, i);
         return false;
       }
       if (boundary == -1) {
         boundary = cap->n;
       } else if (cap->n != boundary) {
         snprintf(reason, reason_size,
-                 "Generator C_%d[%d] has boundary=%d, inconsistent with boundary=%d elsewhere in the complex.",
-                 h, i, cap->n, boundary);
+          "Generator C_%d[%d] has boundary=%d, inconsistent with boundary=%d elsewhere in the complex.",
+          h, i, cap->n, boundary);
         return false;
       }
     }
@@ -150,21 +151,21 @@ static Cap *build_braid_closure_cap(int boundary_size) {
   return closure;
 }
 static Cap *close_cap(const Cap *cap, const Cap *closure_cap, char *reason,
-                      size_t reason_size) {
+  size_t reason_size) {
   if (cap == NULL) {
     snprintf(reason, reason_size,
-             "Tried to close a missing smoothing object.");
+      "Tried to close a missing smoothing object.");
     return NULL;
   }
   if (closure_cap == NULL) {
     snprintf(reason, reason_size,
-             "No closure cap is available for braid closure.");
+      "No closure cap is available for braid closure.");
     return NULL;
   }
   if (cap->n != closure_cap->n) {
     snprintf(reason, reason_size,
-             "Cannot close a cap with boundary=%d using a closure cap with boundary=%d.",
-             cap->n, closure_cap->n);
+      "Cannot close a cap with boundary=%d using a closure cap with boundary=%d.",
+      cap->n, closure_cap->n);
     return NULL;
   }
   if (cap->n == 0)
@@ -173,9 +174,9 @@ static Cap *close_cap(const Cap *cap, const Cap *closure_cap, char *reason,
 }
 
 static SmoothingColumn *close_smoothing_column(const SmoothingColumn *col,
-                                               const Cap *closure_cap,
-                                               char *reason,
-                                               size_t reason_size) {
+  const Cap *closure_cap,
+  char *reason,
+  size_t reason_size) {
   if (col == NULL)
     return NULL;
 
@@ -202,7 +203,7 @@ static SmoothingColumn *close_smoothing_column(const SmoothingColumn *col,
   memcpy(closed->numbers, col->numbers, (size_t)col->n * sizeof(int));
   for (int i = 0; i < col->n; i++) {
     closed->smoothings[i] =
-        close_cap(col->smoothings[i], closure_cap, reason, reason_size);
+      close_cap(col->smoothings[i], closure_cap, reason, reason_size);
     if (closed->smoothings[i] == NULL) {
       for (int j = 0; j < i; j++) {
         Cap_free(closed->smoothings[j]);
@@ -217,7 +218,7 @@ static SmoothingColumn *close_smoothing_column(const SmoothingColumn *col,
 }
 
 static LCCC *close_lccc(const LCCC *lc, const Cap *closure_cap, int boundary_size,
-                        char *reason, size_t reason_size) {
+  char *reason, size_t reason_size) {
   if (lc == NULL)
     return LCCC_createZero();
   if (boundary_size == 0)
@@ -227,42 +228,42 @@ static LCCC *close_lccc(const LCCC *lc, const Cap *closure_cap, int boundary_siz
   for (LCCCTerm *term = lc->head; term != NULL; term = term->next) {
     if (term->cobordism == NULL) {
       snprintf(reason, reason_size,
-               "Encountered a missing cobordism term during braid closure.");
+        "Encountered a missing cobordism term during braid closure.");
       LCCC_free(result);
       return NULL;
     }
 
     if (term->cobordism->source == NULL || term->cobordism->target == NULL) {
       snprintf(reason, reason_size,
-               "Encountered a malformed cobordism term during braid closure.");
+        "Encountered a malformed cobordism term during braid closure.");
       LCCC_free(result);
       return NULL;
     }
     if (term->cobordism->source->n != boundary_size ||
         term->cobordism->target->n != boundary_size) {
       snprintf(reason, reason_size,
-               "Cobordism boundary mismatch during braid closure (source=%d, target=%d, expected=%d).",
-               term->cobordism->source->n, term->cobordism->target->n,
-               boundary_size);
+        "Cobordism boundary mismatch during braid closure (source=%d, target=%d, expected=%d).",
+        term->cobordism->source->n, term->cobordism->target->n,
+        boundary_size);
       LCCC_free(result);
       return NULL;
     }
 
     CannedCobordism *closure_iso =
-        CannedCobordismImpl_isomorphism((Cap *)closure_cap);
+      CannedCobordismImpl_isomorphism((Cap *)closure_cap);
     if (closure_iso == NULL) {
       snprintf(reason, reason_size,
-               "Failed to build the closure isomorphism cobordism.");
+        "Failed to build the closure isomorphism cobordism.");
       LCCC_free(result);
       return NULL;
     }
 
     CannedCobordism *closed_cc = term->cobordism->compose_partial(
-        term->cobordism, 0, closure_iso, 0, boundary_size);
+      term->cobordism, 0, closure_iso, 0, boundary_size);
     CannedCobordism_free(closure_iso);
     if (closed_cc == NULL) {
       snprintf(reason, reason_size,
-               "Horizontal composition failed while closing a cobordism term.");
+        "Horizontal composition failed while closing a cobordism term.");
       LCCC_free(result);
       return NULL;
     }
@@ -278,9 +279,9 @@ static LCCC *close_lccc(const LCCC *lc, const Cap *closure_cap, int boundary_siz
 }
 
 static CobMatrix *close_cobmatrix(const CobMatrix *m, SmoothingColumn *source,
-                                  SmoothingColumn *target,
-                                  const Cap *closure_cap, int boundary_size,
-                                  char *reason, size_t reason_size) {
+  SmoothingColumn *target,
+  const Cap *closure_cap, int boundary_size,
+  char *reason, size_t reason_size) {
   if (m == NULL)
     return NULL;
 
@@ -290,9 +291,9 @@ static CobMatrix *close_cobmatrix(const CobMatrix *m, SmoothingColumn *source,
 
   for (int row = 0; row < m->target->n; row++) {
     for (MatrixEntry *entry = m->entries[row].head; entry != NULL;
-         entry = entry->next) {
+      entry = entry->next) {
       LCCC *closed_value = close_lccc(entry->value, closure_cap, boundary_size,
-                                      reason, reason_size);
+        reason, reason_size);
       if (closed_value == NULL) {
         CobMatrix_free(closed);
         return NULL;
@@ -305,7 +306,7 @@ static CobMatrix *close_cobmatrix(const CobMatrix *m, SmoothingColumn *source,
 }
 
 static Komplex *close_braid_komplex(const Komplex *open, char *reason,
-                                    size_t reason_size) {
+  size_t reason_size) {
   int boundary_size = 0;
   if (!komplex_boundary_size(open, &boundary_size, reason, reason_size)) {
     return NULL;
@@ -314,8 +315,8 @@ static Komplex *close_braid_komplex(const Komplex *open, char *reason,
   Cap *closure_cap = build_braid_closure_cap(boundary_size);
   if (closure_cap == NULL) {
     snprintf(reason, reason_size,
-             "Failed to build a braid closure cap for boundary size %d.",
-             boundary_size);
+      "Failed to build a braid closure cap for boundary size %d.",
+      boundary_size);
     return NULL;
   }
 
@@ -327,7 +328,7 @@ static Komplex *close_braid_komplex(const Komplex *open, char *reason,
 
   for (int h = 0; h < open->length; h++) {
     closed->chain_groups[h] = close_smoothing_column(
-        open->chain_groups[h], closure_cap, reason, reason_size);
+      open->chain_groups[h], closure_cap, reason, reason_size);
     if (open->chain_groups[h] != NULL && closed->chain_groups[h] == NULL) {
       Cap_free(closure_cap);
       free_komplex_owned(closed);
@@ -337,8 +338,8 @@ static Komplex *close_braid_komplex(const Komplex *open, char *reason,
 
   for (int i = 0; i < open->length - 1; i++) {
     closed->differentials[i] = close_cobmatrix(
-        open->differentials[i], closed->chain_groups[i], closed->chain_groups[i + 1],
-        closure_cap, boundary_size, reason, reason_size);
+      open->differentials[i], closed->chain_groups[i], closed->chain_groups[i + 1],
+      closure_cap, boundary_size, reason, reason_size);
     if (open->differentials[i] != NULL && closed->differentials[i] == NULL) {
       Cap_free(closure_cap);
       free_komplex_owned(closed);
@@ -351,7 +352,7 @@ static Komplex *close_braid_komplex(const Komplex *open, char *reason,
 }
 
 static bool komplex_has_only_closed_objects(const Komplex *k, char *reason,
-                                            size_t reason_size) {
+  size_t reason_size) {
   for (int h = 0; h < k->length; h++) {
     SmoothingColumn *col = k->chain_groups[h];
     if (col == NULL)
@@ -360,13 +361,13 @@ static bool komplex_has_only_closed_objects(const Komplex *k, char *reason,
       Cap *cap = col->smoothings[i];
       if (cap == NULL) {
         snprintf(reason, reason_size,
-                 "Generator C_%d[%d] has no smoothing object.", h, i);
+          "Generator C_%d[%d] has no smoothing object.", h, i);
         return false;
       }
       if (cap->n != 0 || cap->ncycles != 0) {
         snprintf(reason, reason_size,
-                 "Generator C_%d[%d] is still an open tangle object (boundary=%d, cycles=%d).",
-                 h, i, cap->n, cap->ncycles);
+          "Generator C_%d[%d] is still an open tangle object (boundary=%d, cycles=%d).",
+          h, i, cap->n, cap->ncycles);
         return false;
       }
     }
@@ -374,8 +375,14 @@ static bool komplex_has_only_closed_objects(const Komplex *k, char *reason,
   return true;
 }
 
+static int64_t normalize_mod_i64(int64_t value, int p) {
+  int64_t r = value % (int64_t)p;
+  if (r < 0) r += p;
+  return r;
+}
+
 static bool evaluate_lccc_scalar(LCCC *lc, int64_t *out_value, char *reason,
-                                 size_t reason_size) {
+  size_t reason_size) {
   *out_value = 0;
   if (lc == NULL || LCCC_isZero(lc))
     return true;
@@ -386,60 +393,81 @@ static bool evaluate_lccc_scalar(LCCC *lc, int64_t *out_value, char *reason,
     return true;
   }
 
-  int64_t total = 0;
+  bool field_mode = LCCC_getCoefficientMode() == KH_COEFF_FP;
+  int prime = LCCC_getCoefficientModulus();
+  int64_t total_z = 0;
+  int total_fp = 0;
+
   for (LCCCTerm *term = reduced->head; term != NULL; term = term->next) {
     CannedCobordismImplData *impl =
-        (CannedCobordismImplData *)term->cobordism->impl_data;
+      (CannedCobordismImplData *)term->cobordism->impl_data;
 
     if (impl == NULL) {
       snprintf(reason, reason_size,
-               "Encountered a cobordism term with missing implementation data.");
+        "Encountered a cobordism term with missing implementation data.");
       LCCC_free(reduced);
       return false;
     }
     if (impl->hpower != 0) {
       snprintf(reason, reason_size,
-               "Cannot scalarize a term with nonzero h-power (%d).",
-               impl->hpower);
+        "Cannot scalarize a term with nonzero h-power (%d).",
+        impl->hpower);
       LCCC_free(reduced);
       return false;
     }
     if (impl->top->n != 0 || impl->bottom->n != 0 || impl->top->ncycles != 0 ||
         impl->bottom->ncycles != 0) {
       snprintf(reason, reason_size,
-               "Cannot scalarize a term with non-closed boundary data "
-               "(top n=%d cycles=%d, bottom n=%d cycles=%d).",
-               impl->top->n, impl->top->ncycles, impl->bottom->n,
-               impl->bottom->ncycles);
+        "Cannot scalarize a term with non-closed boundary data "
+        "(top n=%d cycles=%d, bottom n=%d cycles=%d).",
+        impl->top->n, impl->top->ncycles, impl->bottom->n,
+        impl->bottom->ncycles);
       LCCC_free(reduced);
       return false;
     }
 
-    //Evaluate each closed connected component using the current Bar-Natan/Khovanov closed-surface rules after reduction.
-    int64_t surface_value = 1;
+    if (field_mode) {
+      int term_value = LCCC_coeffNormalize(term->coeff);
+      for (int i = 0; i < impl->ncc; i++) {
+        int g = impl->genus[i];
+        int d = impl->dots[i];
+        int surface_factor = 0;
 
-    for (int i = 0; i < impl->ncc; i++) {
-      int g = impl->genus[i];
-      int d = impl->dots[i];
+        if (g == 0 && d == 1)
+          surface_factor = 1;
+        else if (g == 1 && d == 0)
+          surface_factor = 2;
 
-      if (g == 0 && d == 0) {
-        surface_value *= 0;
-      } else if (g == 0 && d == 1) {
-        surface_value *= 1;
-      } else if (g == 1 && d == 0) {
-        surface_value *= 2;
-      } else {
-        surface_value *= 0;
+        term_value = LCCC_coeffMultiply(term_value, surface_factor);
+        if (LCCC_coeffIsZero(term_value)) break;
       }
-    }
+      total_fp = LCCC_coeffAdd(total_fp, term_value);
+    } else {
+      /* Preserve the existing integral scalarization path. */
+      int64_t surface_value = 1;
+      for (int i = 0; i < impl->ncc; i++) {
+        int g = impl->genus[i];
+        int d = impl->dots[i];
 
-    total += term->coeff * surface_value;
+        if (g == 0 && d == 0) {
+          surface_value *= 0;
+        } else if (g == 0 && d == 1) {
+          surface_value *= 1;
+        } else if (g == 1 && d == 0) {
+          surface_value *= 2;
+        } else {
+          surface_value *= 0;
+        }
+      }
+      total_z += (int64_t)term->coeff * surface_value;
+    }
   }
 
   LCCC_free(reduced);
-  *out_value = total;
+  *out_value = field_mode ? normalize_mod_i64(total_fp, prime) : total_z;
   return true;
 }
+
 static int smith_rank(Mat *m) {
   int diag = m->rows < m->cols ? m->rows : m->cols;
   int rank = 0;
@@ -447,6 +475,68 @@ static int smith_rank(Mat *m) {
     if (m->matrix[i][i] != 0)
       rank++;
   }
+  return rank;
+}
+
+/*
+ * Rank of a matrix over F_p by ordinary Gaussian elimination.
+ * The input Mat is not modified. Returns -1 on allocation/inversion failure.
+ */
+static int matrix_rank_mod_prime(const Mat *m, int prime) {
+  if (m == NULL || prime < 2)
+    return -1;
+
+  Mat *work = createMat(m->rows, m->cols);
+  if (work == NULL)
+    return -1;
+
+  for (int r = 0; r < m->rows; r++)
+    for (int c = 0; c < m->cols; c++)
+      work->matrix[r][c] = normalize_mod_i64(m->matrix[r][c], prime);
+
+  int rank = 0;
+  for (int col = 0; col < work->cols && rank < work->rows; col++) {
+    int pivot = -1;
+    for (int r = rank; r < work->rows; r++) {
+      if (work->matrix[r][col] != 0) {
+        pivot = r;
+        break;
+      }
+    }
+    if (pivot < 0)
+      continue;
+
+    if (pivot != rank) {
+      int64_t *tmp = work->matrix[pivot];
+      work->matrix[pivot] = work->matrix[rank];
+      work->matrix[rank] = tmp;
+    }
+
+    int inverse = 0;
+    if (!LCCC_coeffInverse((int)work->matrix[rank][col], &inverse)) {
+      freeMat(work);
+      return -1;
+    }
+
+    for (int c = col; c < work->cols; c++) {
+      work->matrix[rank][c] = normalize_mod_i64(
+        work->matrix[rank][c] * (int64_t)inverse, prime);
+    }
+
+    for (int r = rank + 1; r < work->rows; r++) {
+      int64_t factor = work->matrix[r][col];
+      if (factor == 0)
+        continue;
+      for (int c = col; c < work->cols; c++) {
+        work->matrix[r][c] = normalize_mod_i64(
+          work->matrix[r][c] - factor * work->matrix[rank][c], prime);
+      }
+    }
+
+    rank++;
+  }
+
+  freeMat(work);
   return rank;
 }
 static int run_torsion_regression_test(void) {
@@ -523,22 +613,22 @@ static int q_chain_rank(const Komplex *k, int h, int q) {
 }
 
 static Mat *build_q_slice(const Komplex *k, Mat *full_diff, int h, int q,
-                          char *reason, size_t reason_size) {
+  char *reason, size_t reason_size) {
   int source_rank = q_chain_rank(k, h, q);
   int target_rank = q_chain_rank(k, h + 1, q);
 
   if (source_rank <= 0 || target_rank <= 0) {
     snprintf(reason, reason_size,
-             "Internal error: requested an empty q-slice for d_%d at q=%d.",
-             h, q);
+      "Internal error: requested an empty q-slice for d_%d at q=%d.",
+      h, q);
     return NULL;
   }
 
   Mat *sub = createMat(target_rank, source_rank);
   if (sub == NULL) {
     snprintf(reason, reason_size,
-             "Out of memory while building the q-slice of d_%d at q=%d.",
-             h, q);
+      "Out of memory while building the q-slice of d_%d at q=%d.",
+      h, q);
     return NULL;
   }
 
@@ -561,10 +651,10 @@ static Mat *build_q_slice(const Komplex *k, Mat *full_diff, int h, int q,
   return sub;
 }
 
-static Mat *convert_CobMatrix_to_IntegerMatrix(int h, CobMatrix *cob_diff,
-                                                char *reason,
-                                                size_t reason_size,
-                                                bool *q_preserving) {
+static Mat *convert_CobMatrix_to_ScalarMatrix(int h, CobMatrix *cob_diff,
+  char *reason,
+  size_t reason_size,
+  bool *q_preserving) {
   if (cob_diff == NULL || cob_diff->source == NULL || cob_diff->target == NULL) {
     snprintf(reason, reason_size, "Cannot convert a NULL cobordism matrix.");
     return NULL;
@@ -572,13 +662,13 @@ static Mat *convert_CobMatrix_to_IntegerMatrix(int h, CobMatrix *cob_diff,
 
   Mat *m = createMat(cob_diff->target->n, cob_diff->source->n);
   if (m == NULL) {
-    snprintf(reason, reason_size, "Failed to allocate the integer matrix.");
+    snprintf(reason, reason_size, "Failed to allocate the scalar matrix.");
     return NULL;
   }
 
   for (int row = 0; row < cob_diff->target->n; row++) {
     for (MatrixEntry *entry = cob_diff->entries[row].head; entry != NULL;
-         entry = entry->next) {
+      entry = entry->next) {
       int col = entry->column_index;
       int64_t value = 0;
       if (!evaluate_lccc_scalar(entry->value, &value, reason, reason_size)) {
@@ -598,18 +688,23 @@ static Mat *convert_CobMatrix_to_IntegerMatrix(int h, CobMatrix *cob_diff,
       if (cob_diff->target->numbers != NULL && row >= 0 && row < cob_diff->target->n)
         tgt_q = cob_diff->target->numbers[row];
 
-      
       if (src_q != tgt_q) {
         if (q_preserving != NULL)
           *q_preserving = false;
 
         fprintf(stderr,
-                "WARNING: differential d_%d has nonzero scalar entry changing q: "
-                "row=%d col=%d value=%lld src_q=%d tgt_q=%d\n",
-                h, row, col, (long long)value, src_q, tgt_q);
+          "WARNING: differential d_%d has nonzero scalar entry changing q: "
+          "row=%d col=%d value=%lld src_q=%d tgt_q=%d\n",
+          h, row, col, (long long)value, src_q, tgt_q);
       }
 
-      m->matrix[row][col] += value;
+      if (LCCC_getCoefficientMode() == KH_COEFF_FP) {
+        int p = LCCC_getCoefficientModulus();
+        m->matrix[row][col] =
+          normalize_mod_i64(m->matrix[row][col] + value, p);
+      } else {
+        m->matrix[row][col] += value;
+      }
     }
   }
 
@@ -626,47 +721,142 @@ static void print_braid_word(const int *crossings, const bool *signs, int length
   printf("\n");
 }
 
-static void print_scan_poincare(const int *free_ranks, int h_count, int min_q,
-                                int max_q, int n_plus, int n_minus,
-                                const int *torsion_counts,
-                                const int64_t *torsion_values,
-                                int max_torsion_per_cell) {
-  bool first = true;
-  int q_count = max_q - min_q + 1;
+/*
+ * Build the free/dimension part of the bigraded Khovanov polynomial.
+ *
+ * The homology arrays in FullScanning are indexed by the raw scanning
+ * gradings.  BivariatePoly is now the canonical representation of the
+ * free-rank (over Z) or vector-space-dimension (over F_p) result.
+ * We therefore add the raw (q,h) terms first and apply the global
+ * Khovanov normalization as one polynomial shift.
+ */
+static BivariatePoly *build_rank_poincare(const int *ranks, int h_count,
+  int min_q, int max_q,
+  int n_plus, int n_minus) {
+  if (ranks == NULL || h_count < 0 || max_q < min_q)
+    return NULL;
 
-  printf("P(q,t) = ");
+  BivariatePoly *poly = bp_create();
+  if (poly == NULL)
+    return NULL;
+
+  int q_count = max_q - min_q + 1;
   for (int h = 0; h < h_count; h++) {
     for (int q = min_q; q <= max_q; q++) {
       int idx = h * q_count + (q - min_q);
-      int free_rank = free_ranks[idx];
+      if (ranks[idx] > 0)
+        bp_add_term(poly, q, h, ranks[idx]);
+    }
+  }
+
+  /*
+   * Raw scan grading -> normalized Khovanov grading:
+   *   h_true = h - n_-
+   *   q_true = q + n_+ - n_-
+   */
+  bp_shift(poly, n_plus - n_minus, -n_minus);
+  return poly;
+}
+
+/*
+ * Torsion is deliberately kept separate from BivariatePoly.
+ *
+ * A BivariatePoly coefficient records a free rank/dimension.  For example,
+ * coefficient 2 means two generators, not a Z_2 summand, so encoding torsion
+ * inside the polynomial coefficient would conflate two different objects.
+ */
+static void print_integral_torsion(const int *torsion_counts,
+  const int64_t *torsion_values,
+  int h_count, int min_q, int max_q,
+  int n_plus, int n_minus,
+  int max_torsion_per_cell) {
+  if (torsion_counts == NULL || torsion_values == NULL)
+    return;
+
+  int q_count = max_q - min_q + 1;
+  bool any = false;
+
+  for (int h = 0; h < h_count; h++) {
+    for (int q = min_q; q <= max_q; q++) {
+      int idx = h * q_count + (q - min_q);
       int true_h = h - n_minus;
       int true_q = q + n_plus - n_minus;
 
-      if (free_rank > 0) {
-        if (!first) printf(" + ");
-        first = false;
-        if (free_rank != 1) printf("%d", free_rank);
-        printf("q^%d", true_q);
-        if (true_h != 0) printf("t^%d", true_h);
-      }
-
       for (int i = 0; i < torsion_counts[idx]; i++) {
-        if (!first) printf(" + ");
-        first = false;
-        printf("Z_%lld",
-               (long long)torsion_values[idx * max_torsion_per_cell + i]);
-        printf("q^%d", true_q);
-        if (true_h != 0) printf("t^%d", true_h);
+        if (!any) {
+          printf("Torsion terms:\n");
+          any = true;
+        }
+
+        int64_t value =
+          torsion_values[idx * max_torsion_per_cell + i];
+        printf("  Z_%lld q^{%d}", (long long)value, true_q);
+        if (true_h != 0)
+          printf("t^{%d}", true_h);
+        printf("\n");
       }
     }
   }
 
-  if (first) printf("0");
-  printf("\n");
+  if (!any)
+    printf("Torsion terms: none\n");
+}
+
+/*
+ * Print the graded Euler characteristic of the free/dimension polynomial.
+ * Torsion does not contribute to Euler characteristic.
+ */
+static bool print_graded_euler_characteristic(const BivariatePoly *poly) {
+  BivariatePoly *euler = bp_eval_t(poly, -1);
+  if (euler == NULL)
+    return false;
+
+  printf("chi_q(Kh) = ");
+  bp_print(euler);
+  bp_free(euler);
+  return true;
+}
+
+/*
+ * Common result-output path for both Z and F_p.
+ *
+ * Both coefficient systems now feed the same BivariatePoly representation.
+ * The only additional integral information is torsion, which remains a
+ * separate upstream data set.
+ */
+static bool print_poincare_summary(const int *ranks, int h_count,
+  int min_q, int max_q,
+  int n_plus, int n_minus,
+  const int *torsion_counts,
+  const int64_t *torsion_values,
+  int max_torsion_per_cell) {
+  BivariatePoly *poly =
+    build_rank_poincare(ranks, h_count, min_q, max_q, n_plus, n_minus);
+  if (poly == NULL)
+    return false;
+
+  if (LCCC_getCoefficientMode() == KH_COEFF_FP) {
+    printf("Kh_F%d(q,t) = ", LCCC_getCoefficientModulus());
+    bp_print(poly);
+  } else {
+    printf("Kh_free(q,t) = ");
+    bp_print(poly);
+    print_integral_torsion(torsion_counts, torsion_values,
+      h_count, min_q, max_q,
+      n_plus, n_minus, max_torsion_per_cell);
+  }
+
+  if (!print_graded_euler_characteristic(poly)) {
+    bp_free(poly);
+    return false;
+  }
+
+  bp_free(poly);
+  return true;
 }
 
 static Komplex *build_scan_komplex(int n_strands, const int *crossings,
-                                   const bool *signs, int length) {
+  const bool *signs, int length) {
   Komplex *current = Komplex_identityBraid(n_strands);
   if (current == NULL) return NULL;
 
@@ -688,10 +878,9 @@ static Komplex *build_scan_komplex(int n_strands, const int *crossings,
 }
 
 int main(int argc, char **argv) {
-  if (!run_torsion_regression_test()) {
-    fprintf(stderr, "torsion regression test failed\n");
-    return 3;
-  }
+  /* Preserve the historical behavior unless the command line selects F_p. */
+  LCCC_setCoefficientIntegers();
+
   int n_strands = 0;
   int *crossings = NULL;
   bool *signs = NULL;
@@ -711,6 +900,51 @@ int main(int argc, char **argv) {
   while (start < argc) {
     if (strcmp(argv[start], "--quiet") == 0) {
       start++;
+      continue;
+    }
+
+    if (strcmp(argv[start], "--coeff") == 0) {
+      if (start + 1 >= argc) {
+        fprintf(stderr, "--coeff requires Z or F<p>, for example Z, F2, or F3.\n");
+        return 2;
+      }
+
+      const char *spec = argv[start + 1];
+      if (strcmp(spec, "Z") == 0 || strcmp(spec, "z") == 0) {
+        LCCC_setCoefficientIntegers();
+      } else if ((spec[0] == 'F' || spec[0] == 'f') && spec[1] != '\0') {
+        char *end = NULL;
+        long p = strtol(spec + 1, &end, 10);
+        if (end == spec + 1 || *end != '\0' || p < 2 ||
+            p > 2147483647L || !LCCC_setCoefficientModPrime((int)p)) {
+          fprintf(stderr,
+            "Invalid field '%s': use F<p> with p prime, for example F2 or F3.\n",
+            spec);
+          return 2;
+        }
+      } else {
+        fprintf(stderr,
+          "Invalid coefficient system '%s': use Z or F<p>.\n", spec);
+        return 2;
+      }
+
+      start += 2;
+      continue;
+    }
+
+    if (strcmp(argv[start], "--mod") == 0) {
+      if (start + 1 >= argc) {
+        fprintf(stderr, "--mod requires a prime modulus.\n");
+        return 2;
+      }
+      char *end = NULL;
+      long p = strtol(argv[start + 1], &end, 10);
+      if (end == argv[start + 1] || *end != '\0' || p < 2 ||
+          p > 2147483647L || !LCCC_setCoefficientModPrime((int)p)) {
+        fprintf(stderr, "--mod requires a prime integer p >= 2.\n");
+        return 2;
+      }
+      start += 2;
       continue;
     }
 
@@ -757,19 +991,29 @@ int main(int argc, char **argv) {
     break;
   }
 
+  if (LCCC_getCoefficientMode() == KH_COEFF_Z) {
+    if (!run_torsion_regression_test()) {
+      fprintf(stderr, "torsion regression test failed\n");
+      return 3;
+    }
+    printf("Coefficients: Z\n");
+  } else {
+    printf("Coefficients: F_%d\n", LCCC_getCoefficientModulus());
+  }
+
   Komplex *result = NULL;
   Komplex *closed = NULL;
 
   if (pd_mode) {
     if (pd_text == NULL || start != argc) {
       fprintf(stderr,
-              "PD mode accepts the diagram through --pd and does not accept braid generators.\n");
+        "PD mode accepts the diagram through --pd and does not accept braid generators.\n");
       return 2;
     }
 
     PDDiagram diagram;
     if (!PDDiagram_parse(&diagram, pd_text, pd_sign_text, javakh_signs,
-                         reason, sizeof(reason))) {
+      reason, sizeof(reason))) {
       fprintf(stderr, "Invalid PD: %s\n", reason);
       return 2;
     }
@@ -785,7 +1029,7 @@ int main(int argc, char **argv) {
     printf("Crossings: %d\n", diagram.crossing_count);
 
     closed = PDScanner_build(&diagram, pd_reorder, pd_verify_d_squared,
-                             reason, sizeof(reason));
+      reason, sizeof(reason));
     PDDiagram_free(&diagram);
     if (closed == NULL) {
       fprintf(stderr, "Blocked: %s\n", reason);
@@ -825,8 +1069,8 @@ int main(int argc, char **argv) {
 
         if (generator == 0 || abs_generator >= n_strands) {
           fprintf(stderr,
-                  "Invalid braid generator %d for %d strands.\n",
-                  generator, n_strands);
+            "Invalid braid generator %d for %d strands.\n",
+            generator, n_strands);
           free(crossings);
           free(signs);
           return 2;
@@ -875,7 +1119,7 @@ int main(int argc, char **argv) {
   if (closed->length > 1) {
     full_diffs = (Mat **)calloc((size_t)(closed->length - 1), sizeof(Mat *));
     if (full_diffs == NULL) {
-      printf("Blocked: out of memory while allocating integer differentials.\n");
+      printf("Blocked: out of memory while allocating scalar differentials.\n");
       free_komplex_owned(closed);
       free_komplex_owned(result);
       return 1;
@@ -885,8 +1129,8 @@ int main(int argc, char **argv) {
   bool ok = true;
   bool q_preserving = true;
   for (int i = 0; i < closed->length - 1; i++) {
-    full_diffs[i] = convert_CobMatrix_to_IntegerMatrix(
-        i, closed->differentials[i], reason, sizeof(reason), &q_preserving);
+    full_diffs[i] = convert_CobMatrix_to_ScalarMatrix(
+      i, closed->differentials[i], reason, sizeof(reason), &q_preserving);
     if (full_diffs[i] == NULL) {
       ok = false;
       break;
@@ -923,9 +1167,9 @@ int main(int argc, char **argv) {
       int *free_ranks = (int *)calloc((size_t)cell_count, sizeof(int));
       int *torsion_counts = (int *)calloc((size_t)cell_count, sizeof(int));
       int64_t *poincare_torsion_values =
-          (int64_t *)calloc(
-              (size_t)cell_count * (size_t)max_torsion_per_cell,
-              sizeof(int64_t));
+        (int64_t *)calloc(
+          (size_t)cell_count * (size_t)max_torsion_per_cell,
+          sizeof(int64_t));
 
       if (free_ranks == NULL || torsion_counts == NULL ||
           poincare_torsion_values == NULL) {
@@ -969,7 +1213,7 @@ int main(int argc, char **argv) {
 
           if (source_rank > 0) {
             incoming = build_q_slice(closed, full_diffs[h - 1], h - 1, q,
-                                     reason, sizeof(reason));
+              reason, sizeof(reason));
             if (incoming == NULL) {
               printf("Blocked: %s\n", reason);
               ok = false;
@@ -979,7 +1223,7 @@ int main(int argc, char **argv) {
 
           if (target_rank > 0) {
             outgoing = build_q_slice(closed, full_diffs[h], h, q,
-                                     reason, sizeof(reason));
+              reason, sizeof(reason));
             if (outgoing == NULL) {
               printf("Blocked: %s\n", reason);
               freeMat(incoming);
@@ -992,64 +1236,91 @@ int main(int argc, char **argv) {
           int rank_in = 0;
           int torsion_count = 0;
 
+          bool field_mode = LCCC_getCoefficientMode() == KH_COEFF_FP;
+          int field_prime = LCCC_getCoefficientModulus();
+
           if (outgoing != NULL) {
-            toSmithForm(outgoing);
-            if (!isDiag(outgoing)) {
-              printf("Blocked: failed to diagonalize outgoing q-slice at h=%d, q=%d.\n",
-                     h, q);
-              freeMat(outgoing);
-              freeMat(incoming);
-              ok = false;
-              break;
+            if (field_mode) {
+              rank_out = matrix_rank_mod_prime(outgoing, field_prime);
+              if (rank_out < 0) {
+                printf("Blocked: failed to compute outgoing rank over F_%d at h=%d, q=%d.\n",
+                  field_prime, h, q);
+                freeMat(outgoing);
+                freeMat(incoming);
+                ok = false;
+                break;
+              }
+            } else {
+              toSmithForm(outgoing);
+              if (!isDiag(outgoing)) {
+                printf("Blocked: failed to diagonalize outgoing q-slice at h=%d, q=%d.\n",
+                  h, q);
+                freeMat(outgoing);
+                freeMat(incoming);
+                ok = false;
+                break;
+              }
+              rank_out = smith_rank(outgoing);
             }
-            rank_out = smith_rank(outgoing);
           }
 
           if (incoming != NULL) {
-            toSmithForm(incoming);
-            if (!isDiag(incoming)) {
-              printf("Blocked: failed to diagonalize incoming q-slice at h=%d, q=%d.\n",
-                     h, q);
-              freeMat(outgoing);
-              freeMat(incoming);
-              ok = false;
-              break;
-            }
-
-            rank_in = smith_rank(incoming);
-            int diag = incoming->rows < incoming->cols
-                           ? incoming->rows
-                           : incoming->cols;
-
-            for (int i = 0; i < diag; i++) {
-              int64_t value = incoming->matrix[i][i];
-              if (value < 0) value = -value;
-
-              if (value > 1) {
-                if (torsion_count >= max_torsion_per_cell) {
-                  printf("Blocked: torsion-storage bound exceeded at h=%d, q=%d.\n",
-                         h, q);
-                  ok = false;
-                  break;
-                }
-
-                poincare_torsion_values[
-                    cell_idx * max_torsion_per_cell + torsion_count] = value;
-                torsion_count++;
+            if (field_mode) {
+              rank_in = matrix_rank_mod_prime(incoming, field_prime);
+              if (rank_in < 0) {
+                printf("Blocked: failed to compute incoming rank over F_%d at h=%d, q=%d.\n",
+                  field_prime, h, q);
+                freeMat(outgoing);
+                freeMat(incoming);
+                ok = false;
+                break;
               }
-            }
+            } else {
+              toSmithForm(incoming);
+              if (!isDiag(incoming)) {
+                printf("Blocked: failed to diagonalize incoming q-slice at h=%d, q=%d.\n",
+                  h, q);
+                freeMat(outgoing);
+                freeMat(incoming);
+                ok = false;
+                break;
+              }
 
-            if (!ok) {
-              freeMat(outgoing);
-              freeMat(incoming);
-              break;
+              rank_in = smith_rank(incoming);
+              int diag = incoming->rows < incoming->cols
+                ? incoming->rows
+                : incoming->cols;
+
+              for (int i = 0; i < diag; i++) {
+                int64_t value = incoming->matrix[i][i];
+                if (value < 0) value = -value;
+
+                if (value > 1) {
+                  if (torsion_count >= max_torsion_per_cell) {
+                    printf("Blocked: torsion-storage bound exceeded at h=%d, q=%d.\n",
+                      h, q);
+                    ok = false;
+                    break;
+                  }
+
+                  poincare_torsion_values[
+                    cell_idx * max_torsion_per_cell + torsion_count] = value;
+                  torsion_count++;
+                }
+              }
+
+              if (!ok) {
+                freeMat(outgoing);
+                freeMat(incoming);
+                break;
+              }
             }
           }
 
           int hom_rank = chain_rank - rank_out - rank_in;
           if (hom_rank < 0) {
             printf("Blocked: computed a negative homology rank at h=%d, q=%d.\n",
-                   h, q);
+              h, q);
             freeMat(outgoing);
             freeMat(incoming);
             ok = false;
@@ -1063,17 +1334,22 @@ int main(int argc, char **argv) {
           free_ranks[cell_idx] = hom_rank;
           torsion_counts[cell_idx] = torsion_count;
 
-          if (hom_rank > 0) {
-            printf("rank H^{%d, %d} = %d\n", true_h, true_q, hom_rank);
-          } else if (torsion_count == 0) {
-            printf("rank H^{%d, %d} = 0\n", true_h, true_q);
-          }
+          if (LCCC_getCoefficientMode() == KH_COEFF_FP) {
+            printf("dim_F%d H^{%d, %d} = %d\n",
+              LCCC_getCoefficientModulus(), true_h, true_q, hom_rank);
+          } else {
+            if (hom_rank > 0) {
+              printf("rank H^{%d, %d} = %d\n", true_h, true_q, hom_rank);
+            } else if (torsion_count == 0) {
+              printf("rank H^{%d, %d} = 0\n", true_h, true_q);
+            }
 
-          for (int i = 0; i < torsion_count; i++) {
-            int64_t value = poincare_torsion_values[
+            for (int i = 0; i < torsion_count; i++) {
+              int64_t value = poincare_torsion_values[
                 cell_idx * max_torsion_per_cell + i];
-            printf("torsion H^{%d, %d} = Z_%lld\n",
-                   true_h, true_q, (long long)value);
+              printf("torsion H^{%d, %d} = Z_%lld\n",
+                true_h, true_q, (long long)value);
+            }
           }
 
           freeMat(outgoing);
@@ -1085,9 +1361,14 @@ int main(int argc, char **argv) {
 
       if (ok) {
         printf("\n--- Poincare Polynomial ---\n");
-        print_scan_poincare(free_ranks, closed->length, min_q, max_q, n_plus,
-                            n_minus, torsion_counts, poincare_torsion_values,
-                            max_torsion_per_cell);
+        if (!print_poincare_summary(free_ranks, closed->length,
+          min_q, max_q, n_plus, n_minus,
+          torsion_counts,
+          poincare_torsion_values,
+          max_torsion_per_cell)) {
+          printf("Blocked: out of memory while constructing the Poincare polynomial.\n");
+          ok = false;
+        }
       }
 
       free(free_ranks);

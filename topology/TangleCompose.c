@@ -1,4 +1,5 @@
-#include "TangleCompose.h"
+
+#include "Komplex.h"
 #include "CannedCobordismImpl.h"
 #include "LCCC.h"
 #include <stdlib.h>
@@ -10,7 +11,6 @@ static SmoothingColumn *tensor_column(SmoothingColumn *a, int astart,
 
   SmoothingColumn *out = (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
   if (out == NULL) return NULL;
-
   out->n = a->n * b->n;
   out->numbers = out->n > 0 ? (int *)malloc((size_t)out->n * sizeof(int)) : NULL;
   out->smoothings =
@@ -21,7 +21,6 @@ static SmoothingColumn *tensor_column(SmoothingColumn *a, int astart,
     free(out);
     return NULL;
   }
-
   int index = 0;
   for (int i = 0; i < a->n; i++) {
     for (int j = 0; j < b->n; j++) {
@@ -41,7 +40,6 @@ static SmoothingColumn *tensor_column(SmoothingColumn *a, int astart,
   }
   return out;
 }
-
 static LCCC *compose_lccc_with_identity(const LCCC *lc, int lc_start,
                                         Cap *identity_cap, int id_start,
                                         int join_count, int coefficient_sign,
@@ -50,13 +48,11 @@ static LCCC *compose_lccc_with_identity(const LCCC *lc, int lc_start,
 
   LCCC *result = LCCC_createZero();
   if (result == NULL) return NULL;
-
   CannedCobordism *identity = CannedCobordismImpl_isomorphism(identity_cap);
   if (identity == NULL) {
     LCCC_free(result);
     return NULL;
   }
-
   for (LCCCTerm *term = lc->head; term != NULL; term = term->next) {
     CannedCobordism *composed = NULL;
     if (lc_on_left) {
@@ -71,9 +67,8 @@ static LCCC *compose_lccc_with_identity(const LCCC *lc, int lc_start,
       LCCC_free(result);
       return NULL;
     }
-
-    LCCC *single =
-        LCCC_createSingle(composed, coefficient_sign * term->coeff);
+    LCCC *single = LCCC_createSingle(
+        composed, LCCC_coeffMultiply(coefficient_sign, term->coeff));
     if (single == NULL) {
       CannedCobordism_free(identity);
       LCCC_free(result);
@@ -92,16 +87,14 @@ static LCCC *compose_lccc_with_identity(const LCCC *lc, int lc_start,
   CannedCobordism_free(identity);
   return result;
 }
-
 Komplex *Komplex_compose_partial_tangles(Komplex *left, int left_start,
-                                         Komplex *right, int right_start,
-                                         int join_count) {
+  Komplex *right, int right_start,
+  int join_count) {
   if (left == NULL || right == NULL || join_count < 0) return NULL;
 
   int new_length = left->length + right->length - 1;
   Komplex *out = Komplex_create(new_length);
   if (out == NULL) return NULL;
-
   for (int h = 0; h < new_length; h++) {
     int total = 0;
     for (int i = 0; i < left->length; i++) {
@@ -109,7 +102,6 @@ Komplex *Komplex_compose_partial_tangles(Komplex *left, int left_start,
       if (j >= 0 && j < right->length)
         total += left->chain_groups[i]->n * right->chain_groups[j]->n;
     }
-
     SmoothingColumn *column = (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
     if (column == NULL) return NULL;
     column->n = total;
@@ -118,7 +110,6 @@ Komplex *Komplex_compose_partial_tangles(Komplex *left, int left_start,
         total > 0 ? (Cap **)malloc((size_t)total * sizeof(Cap *)) : NULL;
     if (total > 0 && (column->numbers == NULL || column->smoothings == NULL))
       return NULL;
-
     int index = 0;
     for (int i = 0; i < left->length; i++) {
       int j = h - i;
@@ -138,7 +129,6 @@ Komplex *Komplex_compose_partial_tangles(Komplex *left, int left_start,
     }
     out->chain_groups[h] = column;
   }
-
   for (int h = 0; h < new_length - 1; h++) {
     CobMatrix *d =
         CobMatrix_create(out->chain_groups[h], out->chain_groups[h + 1], true);
@@ -148,17 +138,15 @@ Komplex *Komplex_compose_partial_tangles(Komplex *left, int left_start,
     for (int i_out = 0; i_out < left->length; i_out++) {
       int j_out = h + 1 - i_out;
       if (j_out < 0 || j_out >= right->length) continue;
-
       int col_offset = 0;
       for (int i_in = 0; i_in < left->length; i_in++) {
         int j_in = h - i_in;
         if (j_in < 0 || j_in >= right->length) continue;
-
         if (i_out == i_in + 1 && j_out == j_in) {
           CobMatrix *dl = left->differentials[i_in];
           for (int r = 0; r < dl->target->n; r++) {
             for (MatrixEntry *entry = dl->entries[r].head; entry != NULL;
-                 entry = entry->next) {
+              entry = entry->next) {
               for (int b = 0; b < right->chain_groups[j_in]->n; b++) {
                 int row = row_offset + r * right->chain_groups[j_in]->n + b;
                 int col = col_offset +
@@ -173,13 +161,12 @@ Komplex *Komplex_compose_partial_tangles(Komplex *left, int left_start,
             }
           }
         }
-
         if (i_out == i_in && j_out == j_in + 1) {
           CobMatrix *dr = right->differentials[j_in];
           int sign = (i_in & 1) ? -1 : 1;
           for (int r = 0; r < dr->target->n; r++) {
             for (MatrixEntry *entry = dr->entries[r].head; entry != NULL;
-                 entry = entry->next) {
+              entry = entry->next) {
               for (int a = 0; a < left->chain_groups[i_in]->n; a++) {
                 int row = row_offset + a * dr->target->n + r;
                 int col = col_offset + a * dr->source->n + entry->column_index;
@@ -193,7 +180,6 @@ Komplex *Komplex_compose_partial_tangles(Komplex *left, int left_start,
             }
           }
         }
-
         col_offset += left->chain_groups[i_in]->n * right->chain_groups[j_in]->n;
       }
 

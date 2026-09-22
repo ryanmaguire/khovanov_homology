@@ -5,8 +5,8 @@
 /* Helper to horizontally compose two Caps */
 static Cap *Cap_compose_tangle(const Cap *a, const Cap *b, int n_strands) {
   /* Join the n_strands right endpoints of a with the n_strands left endpoints of b.
-     Endpoint blocks are 0..n-1 on the left and n..2n-1 on the right; the right
-     block is ordered cyclically, so identity pairings use 2n-1-i. */
+   * Endpoint blocks are 0..n-1 on the left and n..2n-1 on the right; the right
+   * block is ordered cyclically, so identity pairings use 2n-1-i. */
   return Cap_compose(a, n_strands, b, 0, n_strands, NULL);
 }
 /* Helper to horizontally compose two SmoothingColumns */
@@ -102,7 +102,8 @@ static CobMatrix *CobMatrix_tensorProductMap2(SmoothingColumn *col_left, CobMatr
           
           CannedCobordism *idtg = id->compose_partial(id, n_strands, g, 0, n_strands);
           
-          LCCC *single = LCCC_createSingle(idtg, term->coeff * koszul_sign);
+          LCCC *single = LCCC_createSingle(
+              idtg, LCCC_coeffMultiply(term->coeff, koszul_sign));
           LCCC *sum = LCCC_add(id_tensor_g, single);
           LCCC_free(id_tensor_g);
           LCCC_free(single);

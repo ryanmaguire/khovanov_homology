@@ -96,10 +96,12 @@ void Komplex_free(Komplex *k) {
  * ================================================================ */
 static bool is_isomorphism(LCCC *lc) {
   if (lc == NULL || LCCC_isZero(lc)) return false;
-  /* An LCCC is an isomorphism only if it has exactly one term
-     with coefficient ±1 and that term is an isomorphism. */
+  /* An LCCC is an isomorphism only if it has exactly one term whose
+   * coefficient is a unit in the active coefficient system and whose
+   * cobordism is itself an isomorphism. Over Z the only units are +/-1;
+   * over F_p every nonzero coefficient is a unit. */
   if (lc->head != NULL && lc->head->next == NULL) {
-    if (lc->head->coeff != 1 && lc->head->coeff != -1) return false;
+    if (!LCCC_coeffIsUnit(lc->head->coeff)) return false;
 
     CannedCobordism *cc = lc->head->cobordism;
     if (cc != NULL && cc->isIsomorphism != NULL) {
@@ -121,7 +123,7 @@ static bool pivot_preserves_q(CobMatrix *D, int source_col, int target_row) {
   return D->source->numbers[source_col] == D->target->numbers[target_row];
 }
 bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
-                                 int target_row) {
+  int target_row) {
   if (chain_idx < 0 || chain_idx >= k->length - 1)
     return false;
   CobMatrix *D = k->differentials[chain_idx];
@@ -151,6 +153,8 @@ bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
     return false;
   /* ---- Step 2: Compute φ⁻¹ ---- */
   LCCC *phi_inv = LCCC_invert(phi);
+  if (phi_inv == NULL)
+    return false;
   /* ---- Step 3: Extract row B = D[target_row][*] (excluding source_col) ---- */
   /* And column C = D[*][source_col] (excluding target_row)              */
   /* Unpack the pivot row: B[j] = D[target_row][j] for j ≠ source_col */
@@ -189,9 +193,10 @@ bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
         continue;
       }
       /*
-      * Over Z, subtraction is implemented by adding the negated correction:
-      * D[i][j] -= correction.
-      */
+       * Subtraction is implemented by coefficient-aware negation, so this is
+       * valid both over Z and over the active prime field F_p:
+       * D[i][j] -= correction.
+       */
       LCCC *neg_correction = LCCC_negate(correction);
       CobMatrix_addEntry(D, i, j, neg_correction);
       LCCC_free(correction);

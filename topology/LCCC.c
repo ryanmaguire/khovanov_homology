@@ -1,13 +1,14 @@
 /*
  *  LCCC.c
  *
- *  Linear Combination of Canned Cobordisms with integer coefficients.
+ *  Linear Combination of Canned Cobordisms with coefficients in Z or F_p.
  *
  *  Purpose:
  *      Implements the coefficient type used in the cobordism-valued
- *      Khovanov complex. Like cobordism terms are combined by adding
- *      integer coefficients, and reduction applies the Bar-Natan
- *      surface relations.
+ *      Khovanov complex. Coefficients remain stored as int values, while
+ *      arithmetic is interpreted either over Z or over a selected prime
+ *      field F_p. Reduction applies the Bar-Natan surface relations in
+ *      that same coefficient system.
  *
  *  Compile (standalone test):
  *      gcc -Wall -Wextra -g -c LCCC.c -I.
@@ -16,8 +17,144 @@
 #include "LCCC.h"
 #include "CannedCobordismImpl.h"
 #include <limits.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* ================================================================
+ *  Coefficient mode
+ * ================================================================ */
+
+/*
+ * One FullScanning run uses one coefficient system. Keeping the selection
+ * here avoids changing every existing LCCC/CobMatrix/Komplex function
+ * signature. Integer coefficients remain the default, preserving the old
+ * behavior unless field mode is explicitly selected.
+ */
+static KHCoefficientMode g_coeff_mode = KH_COEFF_Z;
+static int g_coeff_modulus = 0;
+
+static bool is_prime_int(int p) {
+  if (p < 2)
+    return false;
+  if (p == 2)
+    return true;
+  if ((p % 2) == 0)
+    return false;
+
+  for (int d = 3; d <= p / d; d += 2) {
+    if ((p % d) == 0)
+      return false;
+  }
+  return true;
+}
+
+static int normalize_i64(int64_t value) {
+  if (g_coeff_mode == KH_COEFF_Z) {
+    if (value > INT_MAX || value < INT_MIN)
+      abort();
+    return (int)value;
+  }
+
+  int64_t p = (int64_t)g_coeff_modulus;
+  int64_t r = value % p;
+  if (r < 0)
+    r += p;
+  return (int)r;
+}
+
+void LCCC_setCoefficientIntegers(void) {
+  g_coeff_mode = KH_COEFF_Z;
+  g_coeff_modulus = 0;
+}
+
+bool LCCC_setCoefficientModPrime(int p) {
+  if (!is_prime_int(p))
+    return false;
+
+  g_coeff_mode = KH_COEFF_FP;
+  g_coeff_modulus = p;
+  return true;
+}
+
+KHCoefficientMode LCCC_getCoefficientMode(void) {
+  return g_coeff_mode;
+}
+
+int LCCC_getCoefficientModulus(void) {
+  return g_coeff_modulus;
+}
+
+int LCCC_coeffNormalize(int value) {
+  return normalize_i64((int64_t)value);
+}
+
+int LCCC_coeffAdd(int a, int b) {
+  return normalize_i64((int64_t)a + (int64_t)b);
+}
+
+int LCCC_coeffMultiply(int a, int b) {
+  return normalize_i64((int64_t)a * (int64_t)b);
+}
+
+int LCCC_coeffNegate(int value) {
+  return normalize_i64(-(int64_t)value);
+}
+
+bool LCCC_coeffIsZero(int value) {
+  return LCCC_coeffNormalize(value) == 0;
+}
+
+bool LCCC_coeffIsUnit(int value) {
+  int a = LCCC_coeffNormalize(value);
+  if (g_coeff_mode == KH_COEFF_Z)
+    return a == 1 || a == -1;
+
+  /* F_p is a field because the setter only accepts prime p. */
+  return a != 0;
+}
+
+bool LCCC_coeffInverse(int value, int *inverse_out) {
+  if (inverse_out == NULL)
+    return false;
+
+  int a = LCCC_coeffNormalize(value);
+
+  if (g_coeff_mode == KH_COEFF_Z) {
+    if (a == 1 || a == -1) {
+      *inverse_out = a;
+      return true;
+    }
+    return false;
+  }
+
+  if (a == 0)
+    return false;
+
+  /* Extended Euclidean algorithm. For prime p and a != 0, gcd(a,p)=1. */
+  int64_t old_r = a;
+  int64_t r = g_coeff_modulus;
+  int64_t old_s = 1;
+  int64_t s = 0;
+
+  while (r != 0) {
+    int64_t q = old_r / r;
+
+    int64_t tmp = old_r - q * r;
+    old_r = r;
+    r = tmp;
+
+    tmp = old_s - q * s;
+    old_s = s;
+    s = tmp;
+  }
+
+  if (old_r != 1)
+    return false;
+
+  *inverse_out = normalize_i64(old_s);
+  return true;
+}
 
 /* ================================================================
  *  Internal helpers
@@ -28,7 +165,9 @@
  */
 static LCCCTerm *create_term(CannedCobordism *cc, int coeff) {
   LCCCTerm *t = (LCCCTerm *)malloc(sizeof(LCCCTerm));
-  t->coeff = coeff;
+  if (t == NULL)
+    return NULL;
+  t->coeff = LCCC_coeffNormalize(coeff);
   t->cobordism = cc;
   t->next = NULL;
   return t;
@@ -63,24 +202,25 @@ static bool cobordism_equal(const CannedCobordism *a,
 }
 
 static void lccc_add_term(LCCC *lc, CannedCobordism *cc, int coeff) {
-  if (lc == NULL || cc == NULL || coeff == 0) return;
+  if (lc == NULL || cc == NULL)
+    return;
+
+  coeff = LCCC_coeffNormalize(coeff);
+  if (LCCC_coeffIsZero(coeff))
+    return;
 
   LCCCTerm *prev = NULL;
   LCCCTerm *cur = lc->head;
 
   while (cur != NULL) {
     if (cobordism_equal(cur->cobordism, cc)) {
-      long merged = (long)cur->coeff + (long)coeff;
+      cur->coeff = LCCC_coeffAdd(cur->coeff, coeff);
 
-      if (merged > INT_MAX || merged < INT_MIN) {
-        abort();  //Coefficient overflow; replace int with int64_t if needed.
-      }
-
-      cur->coeff = (int)merged;
-
-      if (cur->coeff == 0) {
-        if (prev) prev->next = cur->next;
-        else lc->head = cur->next;
+      if (LCCC_coeffIsZero(cur->coeff)) {
+        if (prev)
+          prev->next = cur->next;
+        else
+          lc->head = cur->next;
 
         free(cur);
         lc->count--;
@@ -94,6 +234,8 @@ static void lccc_add_term(LCCC *lc, CannedCobordism *cc, int coeff) {
   }
 
   LCCCTerm *t = create_term(cc, coeff);
+  if (t == NULL)
+    return;
   t->next = lc->head;
   lc->head = t;
   lc->count++;
@@ -112,8 +254,16 @@ LCCC *LCCC_createZero(void) {
 
 LCCC *LCCC_createSingle(CannedCobordism *cc, int coeff) {
   LCCC *lc = LCCC_createZero();
-  if (cc != NULL && coeff != 0) {
+  if (lc == NULL)
+    return NULL;
+
+  coeff = LCCC_coeffNormalize(coeff);
+  if (cc != NULL && !LCCC_coeffIsZero(coeff)) {
     LCCCTerm *t = create_term(cc, coeff);
+    if (t == NULL) {
+      free(lc);
+      return NULL;
+    }
     lc->head = t;
     lc->count = 1;
   }
@@ -150,7 +300,7 @@ void LCCC_free(LCCC *lc) {
 }
 
 /* ================================================================
- *  Arithmetic (Z)
+ *  Arithmetic (Z or F_p)
  * ================================================================ */
 
 LCCC *LCCC_add(LCCC *a, LCCC *b) {
@@ -176,9 +326,8 @@ LCCC *LCCC_compose(LCCC *a, LCCC *b) {
       if (ai->cobordism != NULL && bj->cobordism != NULL) {
         CannedCobordism *composed = CannedCobordism_compose(ai->cobordism, bj->cobordism);
         if (composed != NULL) {
-          int64_t new_coeff = (int64_t)ai->coeff * (int64_t)bj->coeff;
-          if (new_coeff > INT_MAX || new_coeff < INT_MIN) abort();
-          lccc_add_term(result, composed, (int)new_coeff);
+          int new_coeff = LCCC_coeffMultiply(ai->coeff, bj->coeff);
+          lccc_add_term(result, composed, new_coeff);
         }
       }
       bj = bj->next;
@@ -189,15 +338,17 @@ LCCC *LCCC_compose(LCCC *a, LCCC *b) {
 }
 
 LCCC *LCCC_multiply(LCCC *a, RingElement *coeff) {
-  if (a == NULL || coeff == NULL || coeff->value == 0) return LCCC_createZero();
-  
+  if (a == NULL || coeff == NULL || LCCC_coeffIsZero(coeff->value))
+    return LCCC_createZero();
+
   LCCC *result = LCCC_clone(a);
+  if (result == NULL)
+    return NULL;
+
   LCCCTerm *cur = result->head;
   while (cur != NULL) {
-      int64_t product = (int64_t)cur->coeff * (int64_t)coeff->value;
-      if (product > INT_MAX || product < INT_MIN) abort();
-      cur->coeff = (int)product;
-      cur = cur->next;
+    cur->coeff = LCCC_coeffMultiply(cur->coeff, coeff->value);
+    cur = cur->next;
   }
   return result;
 }
@@ -222,7 +373,7 @@ LCCC *LCCC_reduce(LCCC *a) {
       CannedCobordismImpl_reverseMaps(impl);
     }
 
-    long coeff_long = (long)cur->coeff;
+    int coeff_value = LCCC_coeffNormalize(cur->coeff);
     bool kill = false;
 
     int nbc = impl->nbc;
@@ -266,7 +417,7 @@ LCCC *LCCC_reduce(LCCC *a) {
 
       if (bcount == 0) {
         if (g == 1 && d == 0) {
-          coeff_long *= 2;
+          coeff_value = LCCC_coeffMultiply(coeff_value, 2);
         } else if (g == 0 && d == 0) {
           kill = true;
           break;
@@ -287,12 +438,12 @@ LCCC *LCCC_reduce(LCCC *a) {
         base_dots[bc] = d + g;
 
         if (g == 1) {
-          coeff_long *= 2;
+          coeff_value = LCCC_coeffMultiply(coeff_value, 2);
         }
       } else {
         if (g + d == 1) {
           if (g == 1) {
-            coeff_long *= 2;
+            coeff_value = LCCC_coeffMultiply(coeff_value, 2);
           }
 
           for (int j = 0; j < bcount; j++) {
@@ -316,7 +467,7 @@ LCCC *LCCC_reduce(LCCC *a) {
       }
     }
 
-    if (kill || coeff_long == 0) {
+    if (kill || LCCC_coeffIsZero(coeff_value)) {
       free(base_dots);
       free(more_work);
       continue;
@@ -443,13 +594,8 @@ LCCC *LCCC_reduce(LCCC *a) {
           new_impl->genus[bc] = 0;
         }
 
-        if (coeff_long > INT_MAX || coeff_long < INT_MIN) {
-          CannedCobordismImpl_free(new_impl);
-          continue;
-        }
-
         CannedCobordism *new_cc = CannedCobordismImpl_as_CannedCobordism(new_impl);
-        lccc_add_term(ret, new_cc, (int)coeff_long);
+        lccc_add_term(ret, new_cc, coeff_value);
       }
     }
 
@@ -469,22 +615,26 @@ LCCC *LCCC_invert(LCCC *lc) {
     return NULL;
 
   /*
-   * Only unit pivots with coefficient +/-1 are invertible over Z.
-   * The current Gaussian elimination path uses identity-like cobordism
-   * pivots, whose inverse is represented by the same underlying term.
+   * The topological pivot is checked by Komplex before this function is
+   * called. Here we only invert its scalar coefficient. Over Z, only +/-1
+   * are units. Over F_p, every nonzero coefficient has an inverse.
    */
-  if (lc->head->coeff != 1 && lc->head->coeff != -1)
+  int inverse = 0;
+  if (!LCCC_coeffInverse(lc->head->coeff, &inverse))
     return NULL;
 
-  return LCCC_clone(lc);
+  return LCCC_createSingle(lc->head->cobordism, inverse);
 }
 
 LCCC *LCCC_negate(LCCC *lc) {
   LCCC *result = LCCC_clone(lc);
+  if (result == NULL)
+    return NULL;
+
   LCCCTerm *cur = result->head;
   while (cur != NULL) {
-      cur->coeff *= -1;
-      cur = cur->next;
+    cur->coeff = LCCC_coeffNegate(cur->coeff);
+    cur = cur->next;
   }
   return result;
 }
@@ -499,16 +649,16 @@ LCCC *LCCC_capOffTop(LCCC *lc, Cap *new_top, bool add_dot) {
         if (capped_cc != NULL) {
             LCCC *single = LCCC_createSingle(capped_cc, cur->coeff);
             LCCC *sum = LCCC_add(res, single);
-            LCCC_free(res); 
+            LCCC_free(res);
             LCCC_free(single);
             res = sum;
         }
         cur = cur->next;
     }
-    
+
     LCCC *reduced_res = LCCC_reduce(res);
     LCCC_free(res);
-    
+
     return reduced_res;
 }
 
@@ -522,16 +672,16 @@ LCCC *LCCC_cupOnBottom(LCCC *lc, Cap *new_bottom, bool add_dot) {
         if (cupped_cc != NULL) {
             LCCC *single = LCCC_createSingle(cupped_cc, cur->coeff);
             LCCC *sum = LCCC_add(res, single);
-            LCCC_free(res); 
+            LCCC_free(res);
             LCCC_free(single);
             res = sum;
         }
         cur = cur->next;
     }
-    
+
     LCCC *reduced_res = LCCC_reduce(res);
     LCCC_free(res);
-    
+
     return reduced_res;
 }
 
