@@ -7,7 +7,7 @@
 // Forward declarations for topological / algebraic types
 // In the C version, LCCC (Linear Combination of Canned Cobordisms) and Caps
 // are represented abstractly.
-typedef struct LCCC LCCC; 
+typedef struct LCCC LCCC;
 typedef struct Cap Cap;
 typedef struct RingElement RingElement;
 
@@ -15,6 +15,7 @@ LCCC* LCCC_add(LCCC* a, LCCC* b);
 LCCC* LCCC_compose(LCCC* a, LCCC* b);
 LCCC* LCCC_multiply(LCCC* a, RingElement* coeff);
 LCCC* LCCC_reduce(LCCC* a);
+LCCC* LCCC_clone(const LCCC* a);
 bool LCCC_isZero(LCCC* a);
 void LCCC_free(LCCC* a);
 
@@ -51,6 +52,8 @@ CobMatrix* CobMatrix_create(SmoothingColumn* source, SmoothingColumn* target, bo
 void CobMatrix_free(CobMatrix* m);
 
 // Core Matrix Operations
+// putEntry/addEntry take ownership of the supplied LCCC pointer.
+// CobMatrix_add clones values from its source before inserting them.
 void CobMatrix_putEntry(CobMatrix* m, int row_idx, int col_idx, LCCC* lc);
 void CobMatrix_addEntry(CobMatrix* m, int row_idx, int col_idx, LCCC* lc);
 LCCC** CobMatrix_unpackRow(CobMatrix* m, int row_idx);

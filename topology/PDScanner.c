@@ -329,32 +329,384 @@ static bool attachment(const int *frontier, int frontier_count,
   return false;
 }
 
+#define PD_CROSSING_LOOKAHEAD_DEPTH 3
+#define PD_CROSSING_PLAN_STEPS (PD_CROSSING_LOOKAHEAD_DEPTH + 1)
+
+typedef struct CrossingPlanScore {
+  bool valid;
+  int joins[PD_CROSSING_PLAN_STEPS];
+  int join_length;
+  int peak_frontier;
+  int frontier_sum;
+  int final_frontier;
+} CrossingPlanScore;
+
+/* Forward declarations for the combinatorial frontier simulator. */
+static int *updated_frontier(const int *frontier, int frontier_count,
+                             int frontier_start, const int crossing[4],
+                             int crossing_start, int join_count,
+                             int *new_count);
+static int find_adjacent_duplicate(const int *frontier, int count);
+static bool has_duplicate(const int *frontier, int count);
+
+static bool score_better(CrossingPlanScore candidate,
+                         CrossingPlanScore incumbent) {
+  if (!candidate.valid) return false;
+  if (!incumbent.valid) return true;
+
+  /*
+   * Match the live JavaKh generateFast chooser's decision principle: maximize
+   * the number of attached boundary edges now, then lexicographically maximize
+   * the attachment counts of the bounded lookahead.  This preserves the old
+   * one-step greedy decision whenever its best join count is unique; lookahead
+   * primarily resolves ties instead of accepting a worse immediate attachment.
+   */
+  int common = candidate.join_length < incumbent.join_length
+                   ? candidate.join_length
+                   : incumbent.join_length;
+  for (int i = 0; i < common; i++) {
+    if (candidate.joins[i] != incumbent.joins[i])
+      return candidate.joins[i] > incumbent.joins[i];
+  }
+  if (candidate.join_length != incumbent.join_length)
+    return candidate.join_length > incumbent.join_length;
+
+  /*
+   * Our PD scanner explicitly closes adjacent duplicate frontier edges between
+   * crossings, unlike the Java chooser's bare edge-list simulation.  If the
+   * full join-count sequence ties, prefer the plan with lower actual temporary
+   * frontier cost under our representation.
+   */
+  if (candidate.peak_frontier != incumbent.peak_frontier)
+    return candidate.peak_frontier < incumbent.peak_frontier;
+  if (candidate.frontier_sum != incumbent.frontier_sum)
+    return candidate.frontier_sum < incumbent.frontier_sum;
+  if (candidate.final_frontier != incumbent.final_frontier)
+    return candidate.final_frontier < incumbent.final_frontier;
+  return false;
+}
+
+/*
+ * Remove a cyclic adjacent pair from a simulated frontier without allocating.
+ * This matches remove_cyclic_pair(), including its rotation convention: after
+ * deleting positions start and start+1, the new frontier begins at start+2.
+ */
+static void remove_cyclic_pair_sim(int *frontier, int *count, int start,
+                                   int *scratch) {
+  int old = *count;
+  int n = 0;
+  for (int k = 2; k < old; k++)
+    scratch[n++] = frontier[(start + k) % old];
+  for (int i = 0; i < n; i++)
+    frontier[i] = scratch[i];
+  *count = old - 2;
+}
+
+/*
+ * Simulate exactly the frontier-only part of adding one crossing and then
+ * closing all newly internal edges.  No Komplex/Cap/CobMatrix objects are
+ * constructed here.
+ *
+ * raw_count is the boundary size immediately after crossing composition,
+ * before internal-edge closures.  That temporary boundary is important for
+ * estimating the cost of the actual scan step, so the lookahead score uses it
+ * as the per-step frontier cost.
+ *
+ * Returns false precisely when the simulated frontier develops a duplicate
+ * edge whose two occurrences are not cyclically adjacent, i.e. the same
+ * topological obstruction that close_internal_edges() rejects at runtime.
+ */
+static bool simulate_frontier_step(const int *frontier, int frontier_count,
+                                   int frontier_start, const int crossing[4],
+                                   int crossing_start, int join_count,
+                                   int *next_frontier, int *next_count,
+                                   int *raw_count, int *scratch) {
+  *raw_count = frontier_count + 4 - 2 * join_count;
+  *next_count = *raw_count;
+
+  int n = 0;
+  for (; n < frontier_count - join_count; n++)
+    next_frontier[n] =
+        frontier[(frontier_start + join_count + n) % frontier_count];
+  for (int j = 0; j < 4 - join_count; j++, n++)
+    next_frontier[n] = crossing[(crossing_start + join_count + j) % 4];
+
+  while (has_duplicate(next_frontier, *next_count)) {
+    int start = find_adjacent_duplicate(next_frontier, *next_count);
+    if (start < 0)
+      return false;
+    remove_cyclic_pair_sim(next_frontier, next_count, start, scratch);
+  }
+
+  return true;
+}
+
+static bool any_unprocessed_crossing(const bool *done, int crossing_count) {
+  for (int i = 0; i < crossing_count; i++)
+    if (!done[i]) return true;
+  return false;
+}
+
+/*
+ * At the depth limit, make one cheap feasibility check.  The extra step is not
+ * included in the JavaKh-style join-count score; it only prevents selecting a
+ * branch that is already provably dead on the next scanner iteration.
+ */
+static bool lookahead_leaf_is_viable(const PDDiagram *diagram,
+                                     const int *frontier, int frontier_count,
+                                     const bool *seen, const bool *done) {
+  if (!any_unprocessed_crossing(done, diagram->crossing_count))
+    return frontier_count == 0;
+
+  int remaining = 0;
+  for (int i = 0; i < diagram->crossing_count; i++)
+    if (!done[i]) remaining++;
+
+  int max_frontier = 4 * diagram->crossing_count + 4;
+  int next_frontier[max_frontier];
+  int scratch[max_frontier];
+
+  for (int i = 0; i < diagram->crossing_count; i++) {
+    if (done[i]) continue;
+
+    int jc = 0, fs = 0, cs = 0;
+    if (!attachment(frontier, frontier_count, diagram->crossings[i], seen,
+                    &jc, &fs, &cs))
+      continue;
+
+    int next_count = 0;
+    int raw_count = 0;
+    if (simulate_frontier_step(frontier, frontier_count, fs,
+                               diagram->crossings[i], cs, jc, next_frontier,
+                               &next_count, &raw_count, scratch)) {
+      if (remaining > 1 || next_count == 0)
+        return true;
+    }
+  }
+
+  return false;
+}
+
+/*
+ * Evaluate the best continuation from the current purely combinatorial PD
+ * state.  The depth parameter is the number of crossings this continuation may
+ * still choose.  The root crossing is scored by choose_crossing(), which then
+ * asks this helper for up to three additional crossings.  This matches the
+ * live JavaKh generateFast convention MAXDEPTH=3: current choice plus up to
+ * three future additions.
+ */
+static CrossingPlanScore crossing_lookahead(const PDDiagram *diagram,
+                                             const int *frontier,
+                                             int frontier_count, bool *seen,
+                                             bool *done, int depth) {
+  CrossingPlanScore best = {0};
+  best.final_frontier = frontier_count;
+
+  if (!any_unprocessed_crossing(done, diagram->crossing_count)) {
+    best.valid = (frontier_count == 0);
+    return best;
+  }
+
+  if (depth <= 0) {
+    best.valid = lookahead_leaf_is_viable(diagram, frontier, frontier_count,
+                                          seen, done);
+    return best;
+  }
+
+  int max_frontier = 4 * diagram->crossing_count + 4;
+  int next_frontier[max_frontier];
+  int scratch[max_frontier];
+
+  for (int i = 0; i < diagram->crossing_count; i++) {
+    if (done[i]) continue;
+
+    int jc = 0, fs = 0, cs = 0;
+    if (!attachment(frontier, frontier_count, diagram->crossings[i], seen,
+                    &jc, &fs, &cs))
+      continue;
+
+    int next_count = 0;
+    int raw_count = 0;
+    if (!simulate_frontier_step(frontier, frontier_count, fs,
+                                diagram->crossings[i], cs, jc, next_frontier,
+                                &next_count, &raw_count, scratch))
+      continue;
+
+    int changed_edges[4];
+    int changed_count = 0;
+    for (int j = 0; j < 4; j++) {
+      int edge = diagram->crossings[i][j];
+      if (!seen[edge]) {
+        seen[edge] = true;
+        changed_edges[changed_count++] = edge;
+      }
+    }
+    done[i] = true;
+
+    CrossingPlanScore child = crossing_lookahead(
+        diagram, next_frontier, next_count, seen, done, depth - 1);
+
+    done[i] = false;
+    for (int j = 0; j < changed_count; j++)
+      seen[changed_edges[j]] = false;
+
+    if (!child.valid)
+      continue;
+
+    CrossingPlanScore candidate = {0};
+    candidate.valid = true;
+    candidate.joins[0] = jc;
+    candidate.join_length = 1;
+    for (int k = 0;
+         k < child.join_length && candidate.join_length < PD_CROSSING_PLAN_STEPS;
+         k++)
+      candidate.joins[candidate.join_length++] = child.joins[k];
+    candidate.peak_frontier =
+        raw_count > child.peak_frontier ? raw_count : child.peak_frontier;
+    candidate.frontier_sum = raw_count + child.frontier_sum;
+    candidate.final_frontier = child.final_frontier;
+
+    if (score_better(candidate, best))
+      best = candidate;
+  }
+
+  return best;
+}
+
 static int choose_crossing(const PDDiagram *diagram, const int *frontier,
                            int frontier_count, const bool *seen,
                            const bool *done, bool reorder, int *join_count,
                            int *frontier_start, int *crossing_start) {
-  int best = -1;
-  int best_join = -1;
-  for (int i = 0; i < diagram->crossing_count; i++) {
-    if (done[i]) continue;
-    int jc = 0, fs = 0, cs = 0;
-    if (!attachment(frontier, frontier_count, diagram->crossings[i], seen,
-                    &jc, &fs, &cs)) continue;
-    if (!reorder) {
+  /* Preserve the old deterministic first-attachable behaviour exactly when
+   * crossing reordering is disabled. */
+  if (!reorder) {
+    for (int i = 0; i < diagram->crossing_count; i++) {
+      if (done[i]) continue;
+      int jc = 0, fs = 0, cs = 0;
+      if (!attachment(frontier, frontier_count, diagram->crossings[i], seen,
+                      &jc, &fs, &cs))
+        continue;
       *join_count = jc;
       *frontier_start = fs;
       *crossing_start = cs;
       return i;
     }
-    if (jc > best_join) {
-      best = i;
+    return -1;
+  }
+
+  bool *work_seen =
+      (bool *)malloc((size_t)diagram->edge_count * sizeof(bool));
+  bool *work_done =
+      (bool *)malloc((size_t)diagram->crossing_count * sizeof(bool));
+  if (work_seen == NULL || work_done == NULL) {
+    /* Planning is an optimization, not a correctness requirement.  If the
+     * tiny planning-state allocation fails, preserve the previous one-step
+     * greedy behaviour instead of failing the PD scan. */
+    free(work_seen);
+    free(work_done);
+
+    int best = -1;
+    int best_join = -1;
+    for (int i = 0; i < diagram->crossing_count; i++) {
+      if (done[i]) continue;
+      int jc = 0, fs = 0, cs = 0;
+      if (!attachment(frontier, frontier_count, diagram->crossings[i], seen,
+                      &jc, &fs, &cs))
+        continue;
+      if (jc > best_join) {
+        best = i;
+        best_join = jc;
+        *join_count = jc;
+        *frontier_start = fs;
+        *crossing_start = cs;
+      }
+    }
+    return best;
+  }
+  memcpy(work_seen, seen, (size_t)diagram->edge_count * sizeof(bool));
+  memcpy(work_done, done, (size_t)diagram->crossing_count * sizeof(bool));
+
+  int max_frontier = 4 * diagram->crossing_count + 4;
+  int next_frontier[max_frontier];
+  int scratch[max_frontier];
+
+  int best_crossing = -1;
+  int best_join = 0;
+  int best_frontier_start = 0;
+  int best_crossing_start = 0;
+  CrossingPlanScore best_score = {0};
+  best_score.final_frontier = frontier_count;
+
+  for (int i = 0; i < diagram->crossing_count; i++) {
+    if (work_done[i]) continue;
+
+    int jc = 0, fs = 0, cs = 0;
+    if (!attachment(frontier, frontier_count, diagram->crossings[i], work_seen,
+                    &jc, &fs, &cs))
+      continue;
+
+    int next_count = 0;
+    int raw_count = 0;
+    if (!simulate_frontier_step(frontier, frontier_count, fs,
+                                diagram->crossings[i], cs, jc, next_frontier,
+                                &next_count, &raw_count, scratch))
+      continue;
+
+    int changed_edges[4];
+    int changed_count = 0;
+    for (int j = 0; j < 4; j++) {
+      int edge = diagram->crossings[i][j];
+      if (!work_seen[edge]) {
+        work_seen[edge] = true;
+        changed_edges[changed_count++] = edge;
+      }
+    }
+    work_done[i] = true;
+
+    CrossingPlanScore child = crossing_lookahead(
+        diagram, next_frontier, next_count, work_seen, work_done,
+        PD_CROSSING_LOOKAHEAD_DEPTH);
+
+    work_done[i] = false;
+    for (int j = 0; j < changed_count; j++)
+      work_seen[changed_edges[j]] = false;
+
+    if (!child.valid)
+      continue;
+
+    CrossingPlanScore candidate = {0};
+    candidate.valid = true;
+    candidate.joins[0] = jc;
+    candidate.join_length = 1;
+    for (int k = 0;
+         k < child.join_length && candidate.join_length < PD_CROSSING_PLAN_STEPS;
+         k++)
+      candidate.joins[candidate.join_length++] = child.joins[k];
+    candidate.peak_frontier =
+        raw_count > child.peak_frontier ? raw_count : child.peak_frontier;
+    candidate.frontier_sum = raw_count + child.frontier_sum;
+    candidate.final_frontier = child.final_frontier;
+
+    /* Iterating crossings in index order makes exact score ties deterministic:
+     * the earlier crossing is retained. */
+    if (score_better(candidate, best_score)) {
+      best_score = candidate;
+      best_crossing = i;
       best_join = jc;
-      *join_count = jc;
-      *frontier_start = fs;
-      *crossing_start = cs;
+      best_frontier_start = fs;
+      best_crossing_start = cs;
     }
   }
-  return best;
+
+  free(work_seen);
+  free(work_done);
+
+  if (best_crossing >= 0) {
+    *join_count = best_join;
+    *frontier_start = best_frontier_start;
+    *crossing_start = best_crossing_start;
+  }
+  return best_crossing;
 }
 
 static int *updated_frontier(const int *frontier, int frontier_count,
@@ -477,8 +829,12 @@ Komplex *PDScanner_build(const PDDiagram *diagram, bool reorder_crossings,
                                reorder_crossings, &join_count, &frontier_start,
                                &crossing_start);
     if (best < 0) {
-      snprintf(reason, reason_size,
-               "No unprocessed crossing attaches as a consecutive block to the current PD frontier.");
+      if (reorder_crossings)
+        snprintf(reason, reason_size,
+                 "No viable crossing order preserves the current cyclic PD frontier within the bounded lookahead.");
+      else
+        snprintf(reason, reason_size,
+                 "No unprocessed crossing attaches as a consecutive block to the current PD frontier.");
       free(frontier); free(seen); free(done); Komplex_free(current);
       return NULL;
     }
@@ -521,13 +877,22 @@ Komplex *PDScanner_build(const PDDiagram *diagram, bool reorder_crossings,
     done[best] = true;
     for (int j = 0; j < 4; j++) seen[diagram->crossings[best][j]] = true;
 
+    int frontier_before_closing = frontier_count;
     if (!close_internal_edges(&current, frontier, &frontier_count,
                               verify_d_squared, reason, reason_size)) {
       free(frontier); free(seen); free(done); Komplex_free(current);
       return NULL;
     }
 
-    reduce_complex(current);
+    /*
+     * close_internal_edges reduces the complex after each actual closure.
+     * If it closed at least one edge, its final iteration already left the
+     * current complex reduced. Only run the outer reduction when no closure
+     * occurred.
+     */
+    if (frontier_count == frontier_before_closing)
+      reduce_complex(current);
+
     if (!check_boundary(current, frontier_count, reason, reason_size)) {
       free(frontier); free(seen); free(done); Komplex_free(current);
       return NULL;

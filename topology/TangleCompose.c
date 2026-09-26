@@ -41,18 +41,15 @@ static SmoothingColumn *tensor_column(SmoothingColumn *a, int astart,
   return out;
 }
 static LCCC *compose_lccc_with_identity(const LCCC *lc, int lc_start,
-                                        Cap *identity_cap, int id_start,
+                                        CannedCobordism *identity, int id_start,
                                         int join_count, int coefficient_sign,
                                         bool lc_on_left) {
   if (lc == NULL) return LCCC_createZero();
+  if (identity == NULL) return NULL;
 
   LCCC *result = LCCC_createZero();
   if (result == NULL) return NULL;
-  CannedCobordism *identity = CannedCobordismImpl_isomorphism(identity_cap);
-  if (identity == NULL) {
-    LCCC_free(result);
-    return NULL;
-  }
+
   for (LCCCTerm *term = lc->head; term != NULL; term = term->next) {
     CannedCobordism *composed = NULL;
     if (lc_on_left) {
@@ -63,33 +60,30 @@ static LCCC *compose_lccc_with_identity(const LCCC *lc, int lc_start,
           identity, id_start, term->cobordism, lc_start, join_count);
     }
     if (composed == NULL) {
-      CannedCobordism_free(identity);
       LCCC_free(result);
       return NULL;
     }
+
     LCCC *single = LCCC_createSingle(
         composed, LCCC_coeffMultiply(coefficient_sign, term->coeff));
     if (single == NULL) {
-      CannedCobordism_free(identity);
       LCCC_free(result);
       return NULL;
     }
+
     LCCC *sum = LCCC_add(result, single);
     LCCC_free(result);
     LCCC_free(single);
-    if (sum == NULL) {
-      CannedCobordism_free(identity);
+    if (sum == NULL)
       return NULL;
-    }
     result = sum;
   }
 
-  CannedCobordism_free(identity);
   return result;
 }
 Komplex *Komplex_compose_partial_tangles(Komplex *left, int left_start,
-  Komplex *right, int right_start,
-  int join_count) {
+                                         Komplex *right, int right_start,
+                                         int join_count) {
   if (left == NULL || right == NULL || join_count < 0) return NULL;
 
   int new_length = left->length + right->length - 1;
@@ -144,40 +138,67 @@ Komplex *Komplex_compose_partial_tangles(Komplex *left, int left_start,
         if (j_in < 0 || j_in >= right->length) continue;
         if (i_out == i_in + 1 && j_out == j_in) {
           CobMatrix *dl = left->differentials[i_in];
-          for (int r = 0; r < dl->target->n; r++) {
-            for (MatrixEntry *entry = dl->entries[r].head; entry != NULL;
-              entry = entry->next) {
-              for (int b = 0; b < right->chain_groups[j_in]->n; b++) {
-                int row = row_offset + r * right->chain_groups[j_in]->n + b;
-                int col = col_offset +
-                          entry->column_index * right->chain_groups[j_in]->n + b;
+          SmoothingColumn *right_col = right->chain_groups[j_in];
+
+          /*
+           * Reuse the identity cobordism for a fixed right-hand smoothing
+           * across every nonzero entry of dl.
+           */
+          for (int b = 0; b < right_col->n; b++) {
+            CannedCobordism *identity =
+                CannedCobordismImpl_isomorphism(right_col->smoothings[b]);
+            if (identity == NULL) return NULL;
+
+            for (int r = 0; r < dl->target->n; r++) {
+              for (MatrixEntry *entry = dl->entries[r].head; entry != NULL;
+                   entry = entry->next) {
+                int row = row_offset + r * right_col->n + b;
+                int col = col_offset + entry->column_index * right_col->n + b;
                 LCCC *value = compose_lccc_with_identity(
-                    entry->value, left_start,
-                    right->chain_groups[j_in]->smoothings[b], right_start,
+                    entry->value, left_start, identity, right_start,
                     join_count, 1, true);
-                if (value == NULL) return NULL;
+                if (value == NULL) {
+                  CannedCobordism_free(identity);
+                  return NULL;
+                }
                 CobMatrix_addEntry(d, row, col, value);
               }
             }
+
+            CannedCobordism_free(identity);
           }
         }
         if (i_out == i_in && j_out == j_in + 1) {
           CobMatrix *dr = right->differentials[j_in];
+          SmoothingColumn *left_col = left->chain_groups[i_in];
           int sign = (i_in & 1) ? -1 : 1;
-          for (int r = 0; r < dr->target->n; r++) {
-            for (MatrixEntry *entry = dr->entries[r].head; entry != NULL;
-              entry = entry->next) {
-              for (int a = 0; a < left->chain_groups[i_in]->n; a++) {
+
+          /*
+           * Likewise, reuse the identity on each left-hand smoothing across
+           * all nonzero entries of dr.
+           */
+          for (int a = 0; a < left_col->n; a++) {
+            CannedCobordism *identity =
+                CannedCobordismImpl_isomorphism(left_col->smoothings[a]);
+            if (identity == NULL) return NULL;
+
+            for (int r = 0; r < dr->target->n; r++) {
+              for (MatrixEntry *entry = dr->entries[r].head; entry != NULL;
+                   entry = entry->next) {
                 int row = row_offset + a * dr->target->n + r;
                 int col = col_offset + a * dr->source->n + entry->column_index;
                 LCCC *value = compose_lccc_with_identity(
-                    entry->value, right_start,
-                    left->chain_groups[i_in]->smoothings[a], left_start,
+                    entry->value, right_start, identity, left_start,
                     join_count, sign, false);
-                if (value == NULL) return NULL;
+                if (value == NULL) {
+                  CannedCobordism_free(identity);
+                  return NULL;
+                }
                 CobMatrix_addEntry(d, row, col, value);
               }
             }
+
+            CannedCobordism_free(identity);
           }
         }
         col_offset += left->chain_groups[i_in]->n * right->chain_groups[j_in]->n;

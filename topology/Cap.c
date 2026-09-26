@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define CAP_COMPOSE_STACK_JOINS 8
+
 /* ----------------------------------------------------------------
  * Purpose:
  *      Allocates a Cap with n boundary edges and the given cycle count.
@@ -197,8 +199,38 @@ Cap *Cap_compose(const Cap *a, int start, const Cap *b, int cstart, int nc,
       ret->pairings[i] = -1 - (ret->pairings[i] - an + nc);
   }
 
+  /*
+   * PD scanning joins at most four crossing edges (and two for an internal
+   * edge closure), so keep the common join scratch space on the stack.
+   * Fall back to the heap for larger generic/braid compositions.
+   */
+  int thisjoins_stack[CAP_COMPOSE_STACK_JOINS];
+  int cjoins_stack[CAP_COMPOSE_STACK_JOINS];
+  bool joinsdone_stack[CAP_COMPOSE_STACK_JOINS];
+  int local_joins_stack[CAP_COMPOSE_STACK_JOINS];
+
+  bool heap_scratch = nc > CAP_COMPOSE_STACK_JOINS;
+  int *thisjoins = heap_scratch
+                       ? (int *)malloc((size_t)nc * sizeof(int))
+                       : thisjoins_stack;
+  int *cjoins = heap_scratch
+                    ? (int *)malloc((size_t)nc * sizeof(int))
+                    : cjoins_stack;
+  bool *joinsdone = heap_scratch
+                        ? (bool *)calloc((size_t)nc, sizeof(bool))
+                        : joinsdone_stack;
+
+  if (heap_scratch && (thisjoins == NULL || cjoins == NULL || joinsdone == NULL)) {
+    free(thisjoins);
+    free(cjoins);
+    free(joinsdone);
+    Cap_free(ret);
+    return NULL;
+  }
+  if (!heap_scratch)
+    memset(joinsdone, 0, (size_t)nc * sizeof(bool));
+
   /* Compute thisjoins: where each of a's join edges connects to */
-  int *thisjoins = (int *)malloc((size_t)nc * sizeof(int));
   for (int i = 0; i < nc; i++) {
     int ii = (i + start) % an;
     thisjoins[i] = (a->pairings[ii] - start - nc + 2 * an) % an;
@@ -218,7 +250,6 @@ Cap *Cap_compose(const Cap *a, int start, const Cap *b, int cstart, int nc,
   }
 
   /* Compute cjoins: where each of b's join edges connects to */
-  int *cjoins = (int *)malloc((size_t)nc * sizeof(int));
   for (int i = 0; i < nc; i++) {
     int ii = (cstart + nc - 1 - i + bn) % bn;
     cjoins[i] = (b->pairings[ii] - cstart - nc + 2 * bn) % bn;
@@ -229,8 +260,6 @@ Cap *Cap_compose(const Cap *a, int start, const Cap *b, int cstart, int nc,
   }
 
   /* Step 3: Resolve pending (negative) pairings from cap a's side */
-  bool *joinsdone = (bool *)calloc((size_t)nc, sizeof(bool));
-
   for (int i = 0; i < an - nc; i++) {
     if (ret->pairings[i] < 0) {
       while (ret->pairings[i] < 0) {
@@ -266,10 +295,21 @@ Cap *Cap_compose(const Cap *a, int start, const Cap *b, int cstart, int nc,
 
   /* Step 4: Mark consumed joins and detect newly created cycles */
   int *local_joins = NULL;
+  bool local_joins_heap = false;
   if (joins != NULL) {
     local_joins = joins;
+  } else if (!heap_scratch) {
+    local_joins = local_joins_stack;
   } else {
     local_joins = (int *)malloc((size_t)nc * sizeof(int));
+    local_joins_heap = true;
+    if (local_joins == NULL) {
+      free(thisjoins);
+      free(cjoins);
+      free(joinsdone);
+      Cap_free(ret);
+      return NULL;
+    }
   }
 
   for (int i = 0; i < nc; i++) {
@@ -295,11 +335,13 @@ Cap *Cap_compose(const Cap *a, int start, const Cap *b, int cstart, int nc,
   }
 
   /* Cleanup */
-  if (joins == NULL)
+  if (local_joins_heap)
     free(local_joins);
-  free(thisjoins);
-  free(cjoins);
-  free(joinsdone);
+  if (heap_scratch) {
+    free(thisjoins);
+    free(cjoins);
+    free(joinsdone);
+  }
 
   return ret;
 }

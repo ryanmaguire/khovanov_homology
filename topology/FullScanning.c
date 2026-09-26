@@ -1,5 +1,6 @@
 #include "TangleKomplex.h"
 #include "PDScanner.h"
+#include "DTtoPD.h"
 #include "Komplex.h"
 #include "Cap.h"
 #include "LCCC.h"
@@ -889,10 +890,12 @@ int main(int argc, char **argv) {
   int n_plus = 0;
   int n_minus = 0;
   bool pd_mode = false;
+  bool dt_mode = false;
   bool pd_reorder = true;
   bool pd_verify_d_squared = true;
   bool javakh_signs = false;
   const char *pd_text = NULL;
+  const char *dt_text = NULL;
   const char *pd_sign_text = NULL;
   char reason[256];
 
@@ -963,6 +966,17 @@ int main(int argc, char **argv) {
       continue;
     }
 
+    if (strcmp(argv[start], "--dt") == 0) {
+      if (start + 1 >= argc) {
+        fprintf(stderr, "--dt requires an alphabetical DT code, for example bca.\n");
+        return 2;
+      }
+      dt_mode = true;
+      dt_text = argv[start + 1];
+      start += 2;
+      continue;
+    }
+
     if (strcmp(argv[start], "--signs") == 0) {
       if (start + 1 >= argc) return 2;
       pd_sign_text = argv[start + 1];
@@ -1004,18 +1018,47 @@ int main(int argc, char **argv) {
   Komplex *result = NULL;
   Komplex *closed = NULL;
 
-  if (pd_mode) {
-    if (pd_text == NULL || start != argc) {
+  if (pd_mode || dt_mode) {
+    if (pd_mode && dt_mode) {
+      fprintf(stderr, "--pd and --dt are mutually exclusive.\n");
+      return 2;
+    }
+    if (start != argc) {
       fprintf(stderr,
-        "PD mode accepts the diagram through --pd and does not accept braid generators.\n");
+        "%s mode does not accept braid generators.\n",
+        dt_mode ? "DT" : "PD");
+      return 2;
+    }
+    if (dt_mode && dt_text == NULL) {
+      fprintf(stderr, "DT mode requires an alphabetical DT code through --dt.\n");
+      return 2;
+    }
+    if (pd_mode && pd_text == NULL) {
+      fprintf(stderr, "PD mode requires a planar diagram through --pd.\n");
+      return 2;
+    }
+    if (dt_mode && (pd_sign_text != NULL || javakh_signs)) {
+      fprintf(stderr,
+        "--signs and --javakh-signs apply only to --pd input; DT conversion determines the crossing signs.\n");
       return 2;
     }
 
     PDDiagram diagram;
-    if (!PDDiagram_parse(&diagram, pd_text, pd_sign_text, javakh_signs,
-      reason, sizeof(reason))) {
-      fprintf(stderr, "Invalid PD: %s\n", reason);
-      return 2;
+    bool parsed = false;
+    if (dt_mode) {
+      parsed = DTtoPD_fromAlphabetical(&diagram, dt_text,
+        reason, sizeof(reason));
+      if (!parsed) {
+        fprintf(stderr, "Invalid DT: %s\n", reason);
+        return 2;
+      }
+    } else {
+      parsed = PDDiagram_parse(&diagram, pd_text, pd_sign_text, javakh_signs,
+        reason, sizeof(reason));
+      if (!parsed) {
+        fprintf(stderr, "Invalid PD: %s\n", reason);
+        return 2;
+      }
     }
 
     for (int i = 0; i < diagram.crossing_count; i++) {
@@ -1025,7 +1068,12 @@ int main(int argc, char **argv) {
         n_minus++;
     }
 
-    printf("Scanning Khovanov harness (planar diagram)\n");
+    if (dt_mode) {
+      printf("Scanning Khovanov harness (alphabetical DT -> planar diagram)\n");
+      printf("DT: %s\n", dt_text);
+    } else {
+      printf("Scanning Khovanov harness (planar diagram)\n");
+    }
     printf("Crossings: %d\n", diagram.crossing_count);
 
     closed = PDScanner_build(&diagram, pd_reorder, pd_verify_d_squared,

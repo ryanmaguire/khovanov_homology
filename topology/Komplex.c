@@ -269,33 +269,46 @@ int Komplex_reduce_with_oracle(Komplex *k, const CollapseSchedule *schedule) {
  * ================================================================ */
 int Komplex_greedyReduce(Komplex *k) {
   int reductions = 0;
-  bool reduced;
-  do {
-    reduced = false;
-    for (int ci = 0; ci < k->length - 1; ci++) {
+
+  /*
+   * Process each differential to a fixed point before advancing.
+   *
+   * Cancelling a pivot in d_i changes d_i by the Schur complement, while
+   * d_{i-1} and d_{i+1} only lose a row/column. Those adjacent deletions do not
+   * create new morphism values, so they cannot create a new isomorphism in a
+   * differential that has already been exhausted. The only place a new pivot
+   * can be created is the current d_i itself.
+   *
+   * This avoids restarting the entire chain complex at ci = 0 after every
+   * successful cancellation.
+   */
+  for (int ci = 0; ci < k->length - 1; ci++) {
+    while (true) {
       CobMatrix *D = k->differentials[ci];
-      if (!D) continue;
-      
-      /* Search for an isomorphism in D */
-      for (int tr = 0; tr < D->target->n; tr++) {
+      if (D == NULL)
+        break;
+
+      bool reduced_here = false;
+
+      for (int tr = 0; tr < D->target->n && !reduced_here; tr++) {
         MatrixEntry *cur = D->entries[tr].head;
         while (cur != NULL) {
           int sc = cur->column_index;
-          if (is_isomorphism(cur->value) && pivot_preserves_q(D, sc, tr)) {
-            if (Komplex_blockReductionLemma(k, ci, sc, tr)) {
-              reductions++;
-              reduced = true;
-              break; /* Break out of while loop, D has changed */
-            }
+          if (is_isomorphism(cur->value) && pivot_preserves_q(D, sc, tr) &&
+              Komplex_blockReductionLemma(k, ci, sc, tr)) {
+            reductions++;
+            reduced_here = true;
+            break; /* D changed; restart the search in this differential. */
           }
           cur = cur->next;
         }
-        if (reduced) break; /* Break out of target loop */
       }
-      if (reduced) break; /* Restart the full scan from ci=0 because adjacent matrices changed */
+
+      if (!reduced_here)
+        break;
     }
-  } while (reduced);
-  
+  }
+
   return reductions;
 }
 void Komplex_deloop(Komplex *k) {
@@ -416,12 +429,11 @@ void Komplex_deloop(Komplex *k) {
         k->differentials[h] = new_d_out;
         CobMatrix_free(old_d_out);
       }
-      for (int di = 0; di < k->length - 1; di++) {
-        if (k->differentials[di] != NULL) {
-          CobMatrix_reduce(k->differentials[di]);
-        }
-      }
-
+      /*
+       * Only the incoming and outgoing differentials were changed by this
+       * delooping step, and both were reduced immediately after rebuilding.
+       * Reducing every unrelated differential here was redundant.
+       */
       reduced = true;
       break;
     }

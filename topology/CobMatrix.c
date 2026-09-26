@@ -11,16 +11,16 @@ static MatrixEntry *create_entry(int col_idx, LCCC *value) {
   return entry;
 }
 
-//Helper to free a matrix row list (the row itself is a value struct usually)
+// Helper to free a matrix row list.
+//
+// Matrix entries own their LCCC values. Row/column extraction moves entries
+// rather than sharing them, and CobMatrix_add clones source values before
+// inserting them into the destination.
 static void free_matrix_row(MatrixRow *row) {
   MatrixEntry *current = row->head;
   while (current != NULL) {
     MatrixEntry *next = current->next;
-    /*
-    * MatrixEntry nodes are freed here. LCCC values are not freed here because
-    * entries may share LCCC pointers moved from other matrices during extraction
-    * or composition. Ownership is handled by the surrounding reduction pipeline.
-    */
+    LCCC_free(current->value);
     free(current);
     current = next;
   }
@@ -70,22 +70,30 @@ void CobMatrix_free(CobMatrix *m) {
 // ----------------------------------------------------
 
 void CobMatrix_putEntry(CobMatrix *m, int row_idx, int col_idx, LCCC *lc) {
-  if (lc == NULL || LCCC_isZero(lc)) {
+  // Ownership of lc is transferred to the matrix.
+  if (lc == NULL)
+    return;
+  if (LCCC_isZero(lc)) {
+    LCCC_free(lc);
     return;
   }
 
   MatrixRow *row = &m->entries[row_idx];
   MatrixEntry *new_entry = create_entry(col_idx, lc);
 
-  // Insert into linked list (keep sorted by col_idx ideally, but appending is
-  // fine for now) Here we append at head for simplicity, but for matrix
-  // multiplications sorted order is better.
+  // Insert at the head. A later optimization may keep rows sorted, but sparse
+  // linked rows remain correct without ordering.
   new_entry->next = row->head;
   row->head = new_entry;
 }
 
 void CobMatrix_addEntry(CobMatrix *m, int row_idx, int col_idx, LCCC *t) {
-  if (t == NULL || LCCC_isZero(t)) {
+  // Ownership of t is transferred to this function whether the entry is
+  // inserted, merged, or vanishes.
+  if (t == NULL)
+    return;
+  if (LCCC_isZero(t)) {
+    LCCC_free(t);
     return;
   }
 
@@ -96,8 +104,9 @@ void CobMatrix_addEntry(CobMatrix *m, int row_idx, int col_idx, LCCC *t) {
   while (current != NULL) {
     if (current->column_index == col_idx) {
       LCCC *sum = LCCC_add(current->value, t);
-      if (LCCC_isZero(sum)) {
-        // remove entry
+      LCCC_free(t);
+
+      if (sum == NULL || LCCC_isZero(sum)) {
         if (prev) {
           prev->next = current->next;
         } else {
@@ -116,7 +125,6 @@ void CobMatrix_addEntry(CobMatrix *m, int row_idx, int col_idx, LCCC *t) {
     current = current->next;
   }
 
-  // Not found, append
   MatrixEntry *new_entry = create_entry(col_idx, t);
   new_entry->next = row->head;
   row->head = new_entry;
@@ -161,8 +169,8 @@ CobMatrix *CobMatrix_compose(CobMatrix *this_m, CobMatrix *that_m) {
           continue;
         }
         LCCC *composed = LCCC_compose(rowI->value, that_rowJ->value);
-
-        if (composed != NULL && !LCCC_isZero(composed)) {
+        if (composed != NULL) {
+          // addEntry consumes composed, including the zero case.
           CobMatrix_addEntry(result, i, k, composed);
         }
         that_rowJ = that_rowJ->next;
@@ -193,7 +201,9 @@ void CobMatrix_add(CobMatrix *dest, CobMatrix *src) {
   for (int i = 0; i < src->target->n; i++) {
     MatrixEntry *src_entry = src->entries[i].head;
     while (src_entry != NULL) {
-      CobMatrix_addEntry(dest, i, src_entry->column_index, src_entry->value);
+      // addEntry takes ownership, so clone borrowed values from src.
+      CobMatrix_addEntry(dest, i, src_entry->column_index,
+                         LCCC_clone(src_entry->value));
       src_entry = src_entry->next;
     }
   }
@@ -206,9 +216,11 @@ void CobMatrix_reduce(CobMatrix *m) {
     MatrixEntry *current = row->head;
 
     while (current != NULL) {
-      LCCC *reduced = LCCC_reduce(current->value);
+      LCCC *old_value = current->value;
+      LCCC *reduced = LCCC_reduce(old_value);
+      LCCC_free(old_value);
+
       if (reduced == NULL || LCCC_isZero(reduced)) {
-        // remove entry
         MatrixEntry *to_delete = current;
         if (prev) {
           prev->next = current->next;
@@ -216,6 +228,7 @@ void CobMatrix_reduce(CobMatrix *m) {
           row->head = current->next;
         }
         current = current->next;
+        LCCC_free(reduced);
         free(to_delete);
       } else {
         current->value = reduced;

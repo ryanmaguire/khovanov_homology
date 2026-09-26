@@ -640,49 +640,42 @@ LCCC *LCCC_negate(LCCC *lc) {
 }
 
 LCCC *LCCC_capOffTop(LCCC *lc, Cap *new_top, bool add_dot) {
-    if (lc == NULL) return LCCC_createZero();
-    LCCC *res = LCCC_createZero();
+  if (lc == NULL) return LCCC_createZero();
+  LCCC *res = LCCC_createZero();
 
-    LCCCTerm *cur = lc->head;
-    while (cur != NULL) {
-        CannedCobordism *capped_cc = CannedCobordismImpl_capOffTop(cur->cobordism, new_top, add_dot);
-        if (capped_cc != NULL) {
-            LCCC *single = LCCC_createSingle(capped_cc, cur->coeff);
-            LCCC *sum = LCCC_add(res, single);
-            LCCC_free(res);
-            LCCC_free(single);
-            res = sum;
-        }
-        cur = cur->next;
-    }
+  /*
+   * Accumulate directly into res. The previous implementation created a
+   * one-term LCCC and then cloned the entire accumulated list through
+   * LCCC_add on every iteration.
+   */
+  for (LCCCTerm *cur = lc->head; cur != NULL; cur = cur->next) {
+    CannedCobordism *capped_cc =
+        CannedCobordismImpl_capOffTop(cur->cobordism, new_top, add_dot);
+    if (capped_cc != NULL)
+      lccc_add_term(res, capped_cc, cur->coeff);
+  }
 
-    LCCC *reduced_res = LCCC_reduce(res);
-    LCCC_free(res);
+  LCCC *reduced_res = LCCC_reduce(res);
+  LCCC_free(res);
 
-    return reduced_res;
+  return reduced_res;
 }
 
 LCCC *LCCC_cupOnBottom(LCCC *lc, Cap *new_bottom, bool add_dot) {
-    if (lc == NULL) return LCCC_createZero();
-    LCCC *res = LCCC_createZero();
+  if (lc == NULL) return LCCC_createZero();
+  LCCC *res = LCCC_createZero();
 
-    LCCCTerm *cur = lc->head;
-    while (cur != NULL) {
-        CannedCobordism *cupped_cc = CannedCobordismImpl_cupOnBottom(cur->cobordism, new_bottom, add_dot);
-        if (cupped_cc != NULL) {
-            LCCC *single = LCCC_createSingle(cupped_cc, cur->coeff);
-            LCCC *sum = LCCC_add(res, single);
-            LCCC_free(res);
-            LCCC_free(single);
-            res = sum;
-        }
-        cur = cur->next;
-    }
+  for (LCCCTerm *cur = lc->head; cur != NULL; cur = cur->next) {
+    CannedCobordism *cupped_cc =
+        CannedCobordismImpl_cupOnBottom(cur->cobordism, new_bottom, add_dot);
+    if (cupped_cc != NULL)
+      lccc_add_term(res, cupped_cc, cur->coeff);
+  }
 
-    LCCC *reduced_res = LCCC_reduce(res);
-    LCCC_free(res);
+  LCCC *reduced_res = LCCC_reduce(res);
+  LCCC_free(res);
 
-    return reduced_res;
+  return reduced_res;
 }
 
 /* ================================================================
