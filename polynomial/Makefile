@@ -1,80 +1,67 @@
-# polynomial/Makefile — build & gold regression for Khovanov Poincaré path
+# polynomial/Makefile — matches FLAT layout (all sources in polynomial/)
 #
-# Usage (from repository root):
+# From repo root:
 #   make -C polynomial gold
+#   make -C polynomial low
 #   make -C polynomial check
 #   make -C polynomial clean
-#
-# Or from this directory after placing files:
-#   make gold
-#
-# Produces:
-#   build/test_gold_khovanov   — step-5 gold table
-#   build/libkhpoly.a          — static lib (optional link target)
 
 CC      ?= gcc
 CFLAGS  ?= -std=c11 -Wall -Wextra -O2
 LDFLAGS ?=
 
-# Paths relative to this Makefile (lives in polynomial/)
 ROOT    := ..
 BUILD   := build
 
-INCLUDES := \
-	-I$(ROOT) \
-	-I. \
-	-Ihomology \
-	-Ipolynomial \
-	-Iencoder
+INCLUDES := -I$(ROOT) -I.
 
-# Production polynomial stack (no topology / CobMatrix required)
-POLY_SRCS := \
-	polynomial/BivariatePoly.c \
-	homology/KhPoincare.c \
-	homology/TopologyBridge.c \
-	encoder/KnotEncoder.c \
-	$(ROOT)/IntegerMatrix.c
+POLY_OBJS := \
+	$(BUILD)/BivariatePoly.o \
+	$(BUILD)/KhPoincare.o \
+	$(BUILD)/TopologyBridge.o \
+	$(BUILD)/KnotEncoder.o \
+	$(BUILD)/IntegerMatrix.o
 
-POLY_OBJS := $(patsubst %.c,$(BUILD)/%.o,$(notdir $(POLY_SRCS)))
-
-# Map object names (flat under build/)
-$(BUILD)/BivariatePoly.o:     polynomial/BivariatePoly.c
-$(BUILD)/KhPoincare.o:        homology/KhPoincare.c
-$(BUILD)/TopologyBridge.o:    homology/TopologyBridge.c
-$(BUILD)/KnotEncoder.o:       encoder/KnotEncoder.c
-$(BUILD)/IntegerMatrix.o:     $(ROOT)/IntegerMatrix.c
-
-TEST_GOLD_SRC := test/test_gold_khovanov.c
-TEST_GOLD_BIN := $(BUILD)/test_gold_khovanov
-
-.PHONY: all gold check lib clean dirs
+.PHONY: all gold low check lib clean dirs
 
 all: gold
 
 dirs:
 	@mkdir -p $(BUILD)
 
-# Pattern: compile any listed source into build/<basename>.o
-$(BUILD)/BivariatePoly.o $(BUILD)/KhPoincare.o $(BUILD)/TopologyBridge.o \
-$(BUILD)/KnotEncoder.o $(BUILD)/IntegerMatrix.o: | dirs
-	$(CC) $(CFLAGS) $(INCLUDES) -c $(filter %.c,$^) -o $@
+$(BUILD)/BivariatePoly.o: BivariatePoly.c BivariatePoly.h | dirs
+	$(CC) $(CFLAGS) $(INCLUDES) -c BivariatePoly.c -o $@
+
+$(BUILD)/KhPoincare.o: KhPoincare.c KhPoincare.h KnotEncoder.h BivariatePoly.h | dirs
+	$(CC) $(CFLAGS) $(INCLUDES) -c KhPoincare.c -o $@
+
+$(BUILD)/TopologyBridge.o: TopologyBridge.c TopologyBridge.h KhPoincare.h | dirs
+	$(CC) $(CFLAGS) $(INCLUDES) -c TopologyBridge.c -o $@
+
+$(BUILD)/KnotEncoder.o: KnotEncoder.c KnotEncoder.h BivariatePoly.h KhPoincare.h | dirs
+	$(CC) $(CFLAGS) $(INCLUDES) -c KnotEncoder.c -o $@
+
+$(BUILD)/IntegerMatrix.o: $(ROOT)/IntegerMatrix.c $(ROOT)/IntegerMatrix.h | dirs
+	$(CC) $(CFLAGS) $(INCLUDES) -c $(ROOT)/IntegerMatrix.c -o $@
 
 lib: $(BUILD)/libkhpoly.a
 
-$(BUILD)/libkhpoly.a: $(BUILD)/BivariatePoly.o $(BUILD)/KhPoincare.o \
-		$(BUILD)/TopologyBridge.o $(BUILD)/KnotEncoder.o $(BUILD)/IntegerMatrix.o
+$(BUILD)/libkhpoly.a: $(POLY_OBJS)
 	ar rcs $@ $^
 
-$(TEST_GOLD_BIN): $(TEST_GOLD_SRC) $(BUILD)/BivariatePoly.o $(BUILD)/KhPoincare.o \
-		$(BUILD)/TopologyBridge.o $(BUILD)/KnotEncoder.o $(BUILD)/IntegerMatrix.o | dirs
-	$(CC) $(CFLAGS) $(INCLUDES) -o $@ $(TEST_GOLD_SRC) \
-		$(BUILD)/BivariatePoly.o $(BUILD)/KhPoincare.o \
-		$(BUILD)/TopologyBridge.o $(BUILD)/KnotEncoder.o \
-		$(BUILD)/IntegerMatrix.o $(LDFLAGS)
+$(BUILD)/test_gold_khovanov: test_gold_khovanov.c $(POLY_OBJS) | dirs
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ test_gold_khovanov.c $(POLY_OBJS) $(LDFLAGS)
 
-gold: $(TEST_GOLD_BIN)
+$(BUILD)/test_low_crossing: test_low_crossing_javakh.c $(POLY_OBJS) | dirs
+	$(CC) $(CFLAGS) $(INCLUDES) -o $@ test_low_crossing_javakh.c $(POLY_OBJS) $(LDFLAGS)
+
+gold: $(BUILD)/test_gold_khovanov
 	@echo "=== running gold tests ==="
-	./$(TEST_GOLD_BIN)
+	./$(BUILD)/test_gold_khovanov
+
+low: $(BUILD)/test_low_crossing
+	@echo "=== running 4/5/6 crossing checks ==="
+	./$(BUILD)/test_low_crossing
 
 check: gold
 	@echo "=== ALL CHECKS PASSED ==="
