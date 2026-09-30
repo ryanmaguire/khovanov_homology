@@ -198,7 +198,6 @@ int main(int argc, char **argv) {
             die("cannot parse first term of polynomial", line);
         }
         if (tmp.coeff != 0) terms[nterms++] = tmp;
-        first = 0;
         skip_ws(&p);
         while (*p) {
             /* Must see + or - next. */
