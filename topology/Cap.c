@@ -1,3 +1,4 @@
+#include "../KhMemory.h"
 /*
  * Purpose:
  *      Implements the Cap (planar matching / smoothing) used as the
@@ -22,22 +23,19 @@
  * Output:
  *      Cap pointer
  * Output description:
- *      Heap-allocated Cap with uninitialised pairings. NULL on failure.
+ *      One owned Cap reference with uninitialised pairings. Allocation failure is fatal.
  * Method:
  *      malloc struct, malloc pairings array of size n.
  * ---------------------------------------------------------------- */
 Cap *Cap_create(int n, int ncycles) {
-  Cap *cap = (Cap *)malloc(sizeof(Cap));
-  if (cap == NULL)
-    return NULL;
+  if (n < 0 || ncycles < 0 || (n & 1)) kh_fatal("invalid cap dimensions");
+  Cap *cap = (Cap *)kh_malloc(sizeof(Cap));
 
+  cap->references = 1;
   cap->n = n;
   cap->ncycles = ncycles;
-  cap->pairings = (int *)malloc((size_t)n * sizeof(int));
-  if (cap->pairings == NULL && n > 0) {
-    free(cap);
-    return NULL;
-  }
+  cap->pairings = (int *)kh_malloc((size_t)n * sizeof(int));
+
   return cap;
 }
 
@@ -55,9 +53,17 @@ Cap *Cap_create(int n, int ncycles) {
  * Method:
  *      Free pairings, then the struct.
  * ---------------------------------------------------------------- */
+Cap *Cap_retain(Cap *cap) {
+  if (cap) {
+    if (cap->references == SIZE_MAX) kh_fatal("cap reference count overflow");
+    ++cap->references;
+  }
+  return cap;
+}
 void Cap_free(Cap *cap) {
   if (cap == NULL)
     return;
+  if (--cap->references) return;
   free(cap->pairings);
   free(cap);
 }
@@ -108,10 +114,10 @@ bool Cap_equals(const Cap *a, const Cap *b) {
  *      starting from result = 1. Then add ncycles.
  * ---------------------------------------------------------------- */
 int Cap_hashCode(const Cap *cap) {
-  int result = 1;
+  uint32_t result = 1;
   for (int i = 0; i < cap->n; i++)
-    result = 31 * result + cap->pairings[i];
-  return result + cap->ncycles;
+    result = UINT32_C(31) * result + (uint32_t)cap->pairings[i];
+  return kh_hash_int(result + (uint32_t)cap->ncycles);
 }
 
 /* ----------------------------------------------------------------
@@ -145,7 +151,6 @@ Cap *Cap_removeCycle(const Cap *cap) {
 
   int new_ncycles = cap->ncycles > 0 ? cap->ncycles - 1 : 0;
   Cap *copy = Cap_create(cap->n, new_ncycles);
-  if (copy == NULL) return NULL;
 
   if (cap->n > 0) {
     memcpy(copy->pairings, cap->pairings, (size_t)cap->n * sizeof(int));
@@ -211,22 +216,15 @@ Cap *Cap_compose(const Cap *a, int start, const Cap *b, int cstart, int nc,
 
   bool heap_scratch = nc > CAP_COMPOSE_STACK_JOINS;
   int *thisjoins = heap_scratch
-                       ? (int *)malloc((size_t)nc * sizeof(int))
+                       ? (int *)kh_malloc((size_t)nc * sizeof(int))
                        : thisjoins_stack;
   int *cjoins = heap_scratch
-                    ? (int *)malloc((size_t)nc * sizeof(int))
+                    ? (int *)kh_malloc((size_t)nc * sizeof(int))
                     : cjoins_stack;
   bool *joinsdone = heap_scratch
-                        ? (bool *)calloc((size_t)nc, sizeof(bool))
+                        ? (bool *)kh_calloc((size_t)nc, sizeof(bool))
                         : joinsdone_stack;
 
-  if (heap_scratch && (thisjoins == NULL || cjoins == NULL || joinsdone == NULL)) {
-    free(thisjoins);
-    free(cjoins);
-    free(joinsdone);
-    Cap_free(ret);
-    return NULL;
-  }
   if (!heap_scratch)
     memset(joinsdone, 0, (size_t)nc * sizeof(bool));
 
@@ -301,15 +299,9 @@ Cap *Cap_compose(const Cap *a, int start, const Cap *b, int cstart, int nc,
   } else if (!heap_scratch) {
     local_joins = local_joins_stack;
   } else {
-    local_joins = (int *)malloc((size_t)nc * sizeof(int));
+    local_joins = (int *)kh_malloc((size_t)nc * sizeof(int));
     local_joins_heap = true;
-    if (local_joins == NULL) {
-      free(thisjoins);
-      free(cjoins);
-      free(joinsdone);
-      Cap_free(ret);
-      return NULL;
-    }
+
   }
 
   for (int i = 0; i < nc; i++) {

@@ -51,22 +51,23 @@ void printMat(Mat* m);
 
 /*
  * Extract free image-rank and torsion coefficients from a matrix that is
- * already in Smith normal form (call toSmithForm first).
+ * already diagonalized (call toSmithForm first).
  *
  * Semantics (matches the enhanced-state / Khovanov pipeline):
  *   - free_rank  = number of non-zero diagonal entries
  *                  = rank of the image of this differential over Q
  *   - torsions[k] = |d_ii| whenever |d_ii| > 1
- *                  (invariant factors that produce Z/d torsion)
+ *                  (cyclic factors that produce Z/d torsion)
  *
  * Parameters:
  *   m          – matrix in SNF (not modified)
  *   free_rank  – out; may be NULL if not needed
  *   torsions   – out buffer of length at least max_tors; may be NULL
  *   max_tors   – capacity of torsions[]
- *   n_tors     – out; number of torsion coefficients written (capped at max_tors)
+ *   n_tors     – out; total number of torsion factors, including those beyond buffer capacity
  *
- * Returns 0 on success, -1 if m is NULL.
+ * Returns 0 on success; -1 for NULL m or negative capacity; -2 if a
+ * factor to be written does not fit int. Outputs are unchanged on error.
  *
  * Note: Betti numbers of the chain complex are recovered upstream as
  *   β_h = dim C_h − rank(d_h) − rank(d_{h-1})
@@ -80,7 +81,7 @@ int smith_extract(const Mat* m,
 
 /*
  * Convenience: run toSmithForm then smith_extract.
- * Mutates m into SNF. Same out-parameter contract as smith_extract.
+ * Mutates m into a diagonal presentation. Same out-parameter contract as smith_extract.
  */
 int toSmithForm_extract(Mat* m,
                         int* free_rank,

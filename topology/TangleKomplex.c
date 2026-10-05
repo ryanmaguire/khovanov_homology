@@ -1,3 +1,4 @@
+#include "../KhMemory.h"
 #include "TangleKomplex.h"
 #include "CannedCobordismImpl.h"
 #include "LCCC.h"
@@ -11,11 +12,11 @@ static Cap *Cap_compose_tangle(const Cap *a, const Cap *b, int n_strands) {
 }
 /* Helper to horizontally compose two SmoothingColumns */
 static SmoothingColumn *SmoothingColumn_tensorProduct(SmoothingColumn *A, SmoothingColumn *B, int n_strands) {
-  SmoothingColumn *C = (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
-  C->n = A->n * B->n;
+  SmoothingColumn *C = SmoothingColumn_create();
+  C->n = kh_int((int64_t)A->n * B->n);
   if (C->n > 0) {
-    C->numbers = (int *)malloc((size_t)C->n * sizeof(int));
-    C->smoothings = (Cap **)malloc((size_t)C->n * sizeof(Cap *));
+    C->numbers = (int *)kh_malloc((size_t)C->n * sizeof(int));
+    C->smoothings = (Cap **)kh_malloc((size_t)C->n * sizeof(Cap *));
   } else {
     C->numbers = NULL;
     C->smoothings = NULL;
@@ -38,6 +39,8 @@ static CobMatrix *CobMatrix_tensorProductMap1(CobMatrix *d_left, SmoothingColumn
   SmoothingColumn *new_tgt = SmoothingColumn_tensorProduct(d_left->target, col_right, n_strands);
   
   CobMatrix *res = CobMatrix_create(new_src, new_tgt, true);
+  SmoothingColumn_free(new_src);
+  SmoothingColumn_free(new_tgt);
   
   for (int i = 0; i < d_left->target->n; i++) {
     MatrixEntry *entry = d_left->entries[i].head;
@@ -60,12 +63,13 @@ static CobMatrix *CobMatrix_tensorProductMap1(CobMatrix *d_left, SmoothingColumn
           
           /* Add to LCCC */
           LCCC *single = LCCC_createSingle(ftid, term->coeff);
+          CannedCobordism_free(ftid);
           LCCC *sum = LCCC_add(f_tensor_id, single);
           LCCC_free(f_tensor_id);
           LCCC_free(single);
           f_tensor_id = sum;
           
-          id->free_impl(id);
+          CannedCobordism_free(id);
           term = term->next;
         }
         
@@ -82,6 +86,8 @@ static CobMatrix *CobMatrix_tensorProductMap2(SmoothingColumn *col_left, CobMatr
   SmoothingColumn *new_tgt = SmoothingColumn_tensorProduct(col_left, d_right->target, n_strands);
   
   CobMatrix *res = CobMatrix_create(new_src, new_tgt, true);
+  SmoothingColumn_free(new_src);
+  SmoothingColumn_free(new_tgt);
   int koszul_sign = (deg_left % 2 != 0) ? -1 : 1;
   
   for (int i = 0; i < d_right->target->n; i++) {
@@ -104,12 +110,13 @@ static CobMatrix *CobMatrix_tensorProductMap2(SmoothingColumn *col_left, CobMatr
           
           LCCC *single = LCCC_createSingle(
               idtg, LCCC_coeffMultiply(term->coeff, koszul_sign));
+          CannedCobordism_free(idtg);
           LCCC *sum = LCCC_add(id_tensor_g, single);
           LCCC_free(id_tensor_g);
           LCCC_free(single);
           id_tensor_g = sum;
           
-          id->free_impl(id);
+          CannedCobordism_free(id);
           term = term->next;
         }
         
@@ -121,7 +128,7 @@ static CobMatrix *CobMatrix_tensorProductMap2(SmoothingColumn *col_left, CobMatr
   return res;
 }
 Komplex *Komplex_compose_tangles(Komplex *L, Komplex *R, int n_strands) {
-  int new_length = L->length + R->length - 1;
+  int new_length = kh_int((int64_t)L->length + R->length - 1);
   Komplex *T = Komplex_create(new_length);
   
   /* Create chain groups T_k = \bigoplus_{i+j=k} (L_i \otimes R_j) */
@@ -131,15 +138,15 @@ Komplex *Komplex_compose_tangles(Komplex *L, Komplex *R, int n_strands) {
     for (int i = 0; i < L->length; i++) {
       int j = k - i;
       if (j >= 0 && j < R->length) {
-        total_n += L->chain_groups[i]->n * R->chain_groups[j]->n;
+        total_n = kh_int((int64_t)total_n + (int64_t)L->chain_groups[i]->n * R->chain_groups[j]->n);
       }
     }
     
-    SmoothingColumn *Ck = (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
+    SmoothingColumn *Ck = SmoothingColumn_create();
     Ck->n = total_n;
     if (total_n > 0) {
-      Ck->numbers = (int *)malloc((size_t)total_n * sizeof(int));
-      Ck->smoothings = (Cap **)malloc((size_t)total_n * sizeof(Cap *));
+      Ck->numbers = (int *)kh_malloc((size_t)total_n * sizeof(int));
+      Ck->smoothings = (Cap **)kh_malloc((size_t)total_n * sizeof(Cap *));
     } else {
       Ck->numbers = NULL;
       Ck->smoothings = NULL;
@@ -227,12 +234,12 @@ Komplex *Komplex_compose_tangles(Komplex *L, Komplex *R, int n_strands) {
 }
 Komplex *Komplex_identityBraid(int n_strands) {
   Komplex *k = Komplex_create(1);
-  SmoothingColumn *c0 = (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
+  SmoothingColumn *c0 = SmoothingColumn_create();
   c0->n = 1;
-  c0->numbers = (int *)malloc(sizeof(int));
+  c0->numbers = (int *)kh_malloc(sizeof(int));
   c0->numbers[0] = 0;
   
-  c0->smoothings = (Cap **)malloc(sizeof(Cap *));
+  c0->smoothings = (Cap **)kh_malloc(sizeof(Cap *));
   Cap *id_cap = Cap_create(2 * n_strands, 0);
   for (int i = 0; i < n_strands; i++) {
     int right_i = 2 * n_strands - 1 - i;
@@ -273,17 +280,17 @@ Komplex *Komplex_singleCrossing(int n_strands, int crossing_index, bool positive
   cap1->pairings[r0] = r1;
   cap1->pairings[r1] = r0;
   
-  SmoothingColumn *c0 = (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
+  SmoothingColumn *c0 = SmoothingColumn_create();
   c0->n = 1;
-  c0->numbers = (int *)malloc(sizeof(int));
-  c0->smoothings = (Cap **)malloc(sizeof(Cap *));
+  c0->numbers = (int *)kh_malloc(sizeof(int));
+  c0->smoothings = (Cap **)kh_malloc(sizeof(Cap *));
   c0->smoothings[0] = positive ? cap0 : cap1;
   c0->numbers[0] = positive ? 0 : -1;
   
-  SmoothingColumn *c1 = (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
+  SmoothingColumn *c1 = SmoothingColumn_create();
   c1->n = 1;
-  c1->numbers = (int *)malloc(sizeof(int));
-  c1->smoothings = (Cap **)malloc(sizeof(Cap *));
+  c1->numbers = (int *)kh_malloc(sizeof(int));
+  c1->smoothings = (Cap **)kh_malloc(sizeof(Cap *));
   c1->smoothings[0] = positive ? cap1 : cap0;
   c1->numbers[0] = positive ? 1 : 0;
   
@@ -295,13 +302,14 @@ Komplex *Komplex_singleCrossing(int n_strands, int crossing_index, bool positive
   /* Initialize simple CCs. Isomorphism and saddle don't have dots/genus initially */
   impl->ncc = impl->nbc;
   for (int i = 0; i < impl->nbc; i++) impl->connectedComponent[i] = i;
-  impl->dots = (int *)calloc((size_t)impl->ncc, sizeof(int));
-  impl->genus = (int *)calloc((size_t)impl->ncc, sizeof(int));
+  impl->dots = (int *)kh_calloc((size_t)impl->ncc, sizeof(int));
+  impl->genus = (int *)kh_calloc((size_t)impl->ncc, sizeof(int));
   
   CannedCobordism *saddle = CannedCobordismImpl_as_CannedCobordism(impl);
   
   CobMatrix *d = CobMatrix_create(c0, c1, true);
   CobMatrix_putEntry(d, 0, 0, LCCC_createSingle(saddle, 1));
+  CannedCobordism_free(saddle);
   k->differentials[0] = d;
   
   return k;

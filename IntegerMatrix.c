@@ -1,3 +1,4 @@
+#include "KhMemory.h"
 #include "IntegerMatrix.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -46,6 +47,7 @@ static int64_t checkedMul(int64_t a, int64_t b) {
 }
 
 static int64_t i64_abs(int64_t v) {
+    if (v == INT64_MIN) integerMatrixFatal("int64_t absolute value overflow");
     return (v < 0) ? -v : v;
 }
 
@@ -55,30 +57,18 @@ static int64_t i64_abs(int64_t v) {
 Mat* createMat(int rows, int cols) {
     if (rows < 0 || cols < 0) return NULL;
 
-    Mat* m = (Mat*)malloc(sizeof(Mat));
-    if (!m) return NULL;
+    Mat* m = (Mat*)kh_malloc(sizeof(Mat));
 
     m->rows = rows;
     m->cols = cols;
 
     /* Allocate array of pointers for rows using 64-bit type */
-    m->matrix = (int64_t**)malloc((size_t)rows * sizeof(int64_t*));
-    if (rows > 0 && !m->matrix) {
-        free(m);
-        return NULL;
-    }
+    m->matrix = (int64_t**)kh_malloc((size_t)rows * sizeof(int64_t*));
 
     for (int i = 0; i < rows; i++) {
         /* Allocate and zero-initialize columns for each row */
-        m->matrix[i] = (int64_t*)calloc((size_t)cols, sizeof(int64_t));
-        if (cols > 0 && !m->matrix[i]) {
-            for (int j = 0; j < i; j++) {
-                free(m->matrix[j]);
-            }
-            free(m->matrix);
-            free(m);
-            return NULL;
-        }
+        m->matrix[i] = (int64_t*)kh_calloc((size_t)cols, sizeof(int64_t));
+
     }
 
     m->prev = NULL;
@@ -287,7 +277,9 @@ int zeroColumnsToEnd(Mat* m) {
     return nzcols;
 }
 
-/* * Computes the Smith Normal Form (SNF) of the matrix over the Ring of Integers (Z).
+/* * Diagonalizes an integer matrix using unimodular operations.
+ * The resulting cyclic presentation need not have divisibility-ordered
+ * canonical Smith invariant factors.
  * This executes Euclidean reduction to reveal the free ranks (Betti numbers)
  * and structural torsion coefficients of the Khovanov Homology group.
  */
@@ -391,31 +383,26 @@ int smith_extract(const Mat* m,
                   int max_tors,
                   int* n_tors)
 {
-    if (!m) return -1;
-
-    int rank = 0;
-    int nt = 0;
+    if (!m || max_tors < 0) return -1;
+    int rank = 0, nt = 0;
     int limit = (m->rows < m->cols) ? m->rows : m->cols;
-
-    for (int i = 0; i < limit; i++) {
-        int64_t val = m->matrix[i][i];
-        if (val == 0)
-            continue;
-
-        rank++;
-
-        int64_t abs_val = i64_abs(val);
-        if (abs_val > 1) {
-            if (torsions != NULL && nt < max_tors) {
-                /* Cap at INT_MAX for the int out-buffer used by callers. */
-                torsions[nt] = (abs_val > (int64_t)2147483647)
-                                   ? 2147483647
-                                   : (int)abs_val;
-            }
-            nt++;
+    /* Validate before writing: an int buffer must never silently truncate
+     * an int64_t torsion order. A NULL buffer can still query the counts. */
+    for (int i = 0; i < limit; ++i) {
+        int64_t value = i64_abs(m->matrix[i][i]);
+        if (value) ++rank;
+        if (value > 1) {
+            if (torsions && nt < max_tors && value > INT_MAX) return -2;
+            ++nt;
         }
     }
-
+    int written = 0;
+    if (torsions) {
+        for (int i = 0; i < limit && written < max_tors; ++i) {
+            int64_t value = i64_abs(m->matrix[i][i]);
+            if (value > 1) torsions[written++] = (int)value;
+        }
+    }
     if (free_rank) *free_rank = rank;
     if (n_tors) *n_tors = nt;
     return 0;

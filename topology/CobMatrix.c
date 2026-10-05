@@ -1,10 +1,33 @@
+#include "../KhMemory.h"
 #include "CobMatrix.h"
+#include "Cap.h"
+#include <string.h>
 #include <assert.h>
 #include <stdlib.h>
 
+SmoothingColumn *SmoothingColumn_create(void) {
+  SmoothingColumn *col = kh_calloc(1, sizeof(*col));
+  col->references = 1;
+  return col;
+}
+SmoothingColumn *SmoothingColumn_retain(SmoothingColumn *col) {
+  if (col) {
+    if (col->references == SIZE_MAX) kh_fatal("column reference count overflow");
+    ++col->references;
+  }
+  return col;
+}
+void SmoothingColumn_free(SmoothingColumn *col) {
+  if (!col || --col->references) return;
+  for (int i = 0; i < col->n; ++i) Cap_free(col->smoothings[i]);
+  free(col->numbers);
+  free(col->smoothings);
+  free(col);
+}
+
 // Helper to create a new linked list node
 static MatrixEntry *create_entry(int col_idx, LCCC *value) {
-  MatrixEntry *entry = (MatrixEntry *)malloc(sizeof(MatrixEntry));
+  MatrixEntry *entry = (MatrixEntry *)kh_malloc(sizeof(MatrixEntry));
   entry->column_index = col_idx;
   entry->value = value;
   entry->next = NULL;
@@ -33,16 +56,16 @@ static void free_matrix_row(MatrixRow *row) {
 
 CobMatrix *CobMatrix_create(SmoothingColumn *source, SmoothingColumn *target,
                             bool shared) {
-  CobMatrix *m = (CobMatrix *)malloc(sizeof(CobMatrix));
+  CobMatrix *m = (CobMatrix *)kh_malloc(sizeof(CobMatrix));
   if (shared) {
-    m->source = source;
-    m->target = target;
+    m->source = SmoothingColumn_retain(source);
+    m->target = SmoothingColumn_retain(target);
   } else {
     m->source = SmoothingColumn_clone(source);
     m->target = SmoothingColumn_clone(target);
   }
 
-  m->entries = (MatrixRow *)calloc(m->target->n, sizeof(MatrixRow));
+  m->entries = (MatrixRow *)kh_calloc(m->target->n, sizeof(MatrixRow));
   for (int i = 0; i < m->target->n; i++) {
     m->entries[i].head = NULL;
   }
@@ -57,11 +80,8 @@ void CobMatrix_free(CobMatrix *m) {
     free_matrix_row(&m->entries[i]);
   }
   free(m->entries);
-  /*
-  * CobMatrix_free releases the matrix rows and entry nodes only.
-  * It does not free source or target SmoothingColumns, because those columns
-  * may be shared with the ambient Komplex or with extracted row/column slices.
-  */
+  SmoothingColumn_free(m->source);
+  SmoothingColumn_free(m->target);
   free(m);
 }
 
@@ -131,7 +151,7 @@ void CobMatrix_addEntry(CobMatrix *m, int row_idx, int col_idx, LCCC *t) {
 }
 
 LCCC **CobMatrix_unpackRow(CobMatrix *m, int row_idx) {
-  LCCC **unpacked = (LCCC **)calloc(m->source->n, sizeof(LCCC *));
+  LCCC **unpacked = (LCCC **)kh_calloc(m->source->n, sizeof(LCCC *));
   MatrixEntry *current = m->entries[row_idx].head;
   while (current != NULL) {
     unpacked[current->column_index] = current->value;
@@ -157,16 +177,14 @@ CobMatrix *CobMatrix_compose(CobMatrix *this_m, CobMatrix *that_m) {
     while (rowI != NULL) {
       int j = rowI->column_index;
       if (j < 0 || j >= that_m->target->n) {
-        rowI = rowI->next;
-        continue;
+        kh_fatal("invalid row index in matrix composition");
       }
       // Iterate over that_m's row j
       MatrixEntry *that_rowJ = that_m->entries[j].head;
       while (that_rowJ != NULL) {
         int k = that_rowJ->column_index;
         if (k < 0 || k >= result->source->n) {
-          that_rowJ = that_rowJ->next;
-          continue;
+          kh_fatal("invalid column index in matrix composition");
         }
         LCCC *composed = LCCC_compose(rowI->value, that_rowJ->value);
         if (composed != NULL) {
@@ -265,16 +283,17 @@ bool CobMatrix_isZero(CobMatrix *m) {
 CobMatrix *CobMatrix_extractColumn(CobMatrix *m, int column_idx) {
   SmoothingColumn *newTarget = m->target;
   SmoothingColumn *newSource =
-      (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
+      SmoothingColumn_create();
   newSource->n = 1;
-  newSource->numbers = (int *)malloc(sizeof(int));
-  newSource->smoothings = (Cap **)malloc(sizeof(Cap *));
+  newSource->numbers = (int *)kh_malloc(sizeof(int));
+  newSource->smoothings = (Cap **)kh_malloc(sizeof(Cap *));
 
   // Copy the removed column's smoothing column info
   newSource->numbers[0] = m->source->numbers[column_idx];
-  newSource->smoothings[0] = m->source->smoothings[column_idx];
+  newSource->smoothings[0] = Cap_retain(m->source->smoothings[column_idx]);
 
   CobMatrix *res = CobMatrix_create(newSource, newTarget, true);
+  SmoothingColumn_free(newSource);
 
   for (int i = 0; i < m->target->n; i++) {
     MatrixEntry *prev = NULL;
@@ -305,16 +324,16 @@ CobMatrix *CobMatrix_extractColumn(CobMatrix *m, int column_idx) {
 
   // Create a new source column to avoid mutating shared arrays
   SmoothingColumn *new_m_source =
-      (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
+      SmoothingColumn_create();
   new_m_source->n = m->source->n - 1;
   if (new_m_source->n > 0) {
-    new_m_source->numbers = (int *)malloc(sizeof(int) * new_m_source->n);
-    new_m_source->smoothings = (Cap **)malloc(sizeof(Cap *) * new_m_source->n);
+    new_m_source->numbers = (int *)kh_malloc(sizeof(int) * new_m_source->n);
+    new_m_source->smoothings = (Cap **)kh_malloc(sizeof(Cap *) * new_m_source->n);
     for (int i = 0, j = 0; i < m->source->n; i++) {
       if (i == column_idx)
         continue;
       new_m_source->numbers[j] = m->source->numbers[i];
-      new_m_source->smoothings[j] = m->source->smoothings[i];
+      new_m_source->smoothings[j] = Cap_retain(m->source->smoothings[i]);
       j++;
     }
   } else {
@@ -322,8 +341,7 @@ CobMatrix *CobMatrix_extractColumn(CobMatrix *m, int column_idx) {
     new_m_source->smoothings = NULL;
   }
 
-  // Note: we intentionally do not free the old m->source array
-  // because it may be shared if shared=true.
+  SmoothingColumn_free(m->source);
   m->source = new_m_source;
 
   return res;
@@ -338,16 +356,17 @@ CobMatrix *CobMatrix_extractColumn(CobMatrix *m, int column_idx) {
 CobMatrix *CobMatrix_extractRow(CobMatrix *m, int row_idx) {
   SmoothingColumn *newSource = m->source;
   SmoothingColumn *newTarget =
-      (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
+      SmoothingColumn_create();
   newTarget->n = 1;
-  newTarget->numbers = (int *)malloc(sizeof(int));
-  newTarget->smoothings = (Cap **)malloc(sizeof(Cap *));
+  newTarget->numbers = (int *)kh_malloc(sizeof(int));
+  newTarget->smoothings = (Cap **)kh_malloc(sizeof(Cap *));
 
   // Copy the removed row's smoothing target info
   newTarget->numbers[0] = m->target->numbers[row_idx];
-  newTarget->smoothings[0] = m->target->smoothings[row_idx];
+  newTarget->smoothings[0] = Cap_retain(m->target->smoothings[row_idx]);
 
   CobMatrix *res = CobMatrix_create(newSource, newTarget, true);
+  SmoothingColumn_free(newTarget);
 
   // Move list out
   res->entries[0].head = m->entries[row_idx].head;
@@ -361,16 +380,16 @@ CobMatrix *CobMatrix_extractRow(CobMatrix *m, int row_idx) {
 
   // Create a new target column to avoid mutating shared arrays
   SmoothingColumn *new_m_target =
-      (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
+      SmoothingColumn_create();
   new_m_target->n = m->target->n - 1;
   if (new_m_target->n > 0) {
-    new_m_target->numbers = (int *)malloc(sizeof(int) * new_m_target->n);
-    new_m_target->smoothings = (Cap **)malloc(sizeof(Cap *) * new_m_target->n);
+    new_m_target->numbers = (int *)kh_malloc(sizeof(int) * new_m_target->n);
+    new_m_target->smoothings = (Cap **)kh_malloc(sizeof(Cap *) * new_m_target->n);
     for (int i = 0, j = 0; i < m->target->n; i++) {
       if (i == row_idx)
         continue;
       new_m_target->numbers[j] = m->target->numbers[i];
-      new_m_target->smoothings[j] = m->target->smoothings[i];
+      new_m_target->smoothings[j] = Cap_retain(m->target->smoothings[i]);
       j++;
     }
   } else {
@@ -378,9 +397,36 @@ CobMatrix *CobMatrix_extractRow(CobMatrix *m, int row_idx) {
     new_m_target->smoothings = NULL;
   }
 
-  // Note: we intentionally do not free the old m->target array
-  // because it may be shared if shared=true.
+  SmoothingColumn_free(m->target);
   m->target = new_m_target;
 
   return res;
+}
+
+SmoothingColumn *SmoothingColumn_clone(SmoothingColumn *col) {
+  if (col == NULL) return NULL;
+  SmoothingColumn *clone = SmoothingColumn_create();
+
+  clone->n = col->n;
+  if (col->n <= 0) {
+    clone->numbers = NULL;
+    clone->smoothings = NULL;
+    return clone;
+  }
+  clone->numbers = (int *)kh_malloc((size_t)col->n * sizeof(int));
+  clone->smoothings = (Cap **)kh_malloc((size_t)col->n * sizeof(Cap *));
+
+  memcpy(clone->numbers, col->numbers, (size_t)col->n * sizeof(int));
+  for (int i = 0; i < col->n; ++i)
+    clone->smoothings[i] = Cap_retain(col->smoothings[i]);
+  return clone;
+}
+bool SmoothingColumn_equals(SmoothingColumn *a, SmoothingColumn *b) {
+  if (a == b) return true;
+  if (a == NULL || b == NULL || a->n != b->n) return false;
+  for (int i = 0; i < a->n; i++) {
+    if (a->numbers[i] != b->numbers[i]) return false;
+    if (!Cap_equals(a->smoothings[i], b->smoothings[i])) return false;
+  }
+  return true;
 }

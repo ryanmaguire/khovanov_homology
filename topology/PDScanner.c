@@ -1,8 +1,10 @@
+#include "../KhMemory.h"
 #include "PDScanner.h"
 #include "TangleCompose.h"
 #include "CannedCobordismImpl.h"
 #include "LCCC.h"
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,8 +25,7 @@ static bool parse_integer_list(const char *text, int **values, int *count) {
   if (text == NULL) return true;
 
   int capacity = 16;
-  int *out = (int *)malloc((size_t)capacity * sizeof(int));
-  if (out == NULL) return false;
+  int *out = (int *)kh_malloc((size_t)capacity * sizeof(int));
 
   const char *p = text;
   while (*p != '\0') {
@@ -32,22 +33,19 @@ static bool parse_integer_list(const char *text, int **values, int *count) {
     if (*p == '\0') break;
 
     char *end = NULL;
+    errno = 0;
     long value = strtol(p, &end, 10);
     if (end == p) {
       p++;
       continue;
     }
-    if (value < -2147483647L - 1L || value > 2147483647L) {
+    if (errno == ERANGE || value < INT_MIN || value > INT_MAX) {
       free(out);
       return false;
     }
     if (*count == capacity) {
-      capacity *= 2;
-      int *grown = (int *)realloc(out, (size_t)capacity * sizeof(int));
-      if (grown == NULL) {
-        free(out);
-        return false;
-      }
+      capacity = kh_int((int64_t)capacity * 2);
+      int *grown = (int *)kh_realloc(out, (size_t)capacity * sizeof(int));
       out = grown;
     }
     out[(*count)++] = (int)value;
@@ -61,8 +59,8 @@ static bool parse_integer_list(const char *text, int **values, int *count) {
 static bool infer_signs(const int (*raw)[4], int crossings, int *signs,
                         char *reason, size_t reason_size) {
   for (int i = 0; i < crossings; i++) {
-    int d13 = raw[i][1] - raw[i][3];
-    int d31 = raw[i][3] - raw[i][1];
+    int64_t d13 = (int64_t)raw[i][1] - raw[i][3];
+    int64_t d31 = (int64_t)raw[i][3] - raw[i][1];
     if (d13 == 1 || d31 > 1)
       signs[i] = 1;
     else if (d31 == 1 || d13 > 1)
@@ -104,14 +102,8 @@ bool PDDiagram_parse(PDDiagram *diagram, const char *pd_text,
   }
 
   diagram->crossings =
-      (int (*)[4])malloc((size_t)diagram->crossing_count * sizeof(*diagram->crossings));
-  diagram->signs = (int *)malloc((size_t)diagram->crossing_count * sizeof(int));
-  if (diagram->crossings == NULL || diagram->signs == NULL) {
-    free(flat);
-    PDDiagram_free(diagram);
-    snprintf(reason, reason_size, "Out of memory while parsing the PD.");
-    return false;
-  }
+      (int (*)[4])kh_malloc((size_t)diagram->crossing_count * sizeof(*diagram->crossings));
+  diagram->signs = (int *)kh_malloc((size_t)diagram->crossing_count * sizeof(int));
 
   for (int i = 0; i < diagram->crossing_count; i++)
     for (int j = 0; j < 4; j++) diagram->crossings[i][j] = flat[4 * i + j];
@@ -153,15 +145,8 @@ bool PDDiagram_parse(PDDiagram *diagram, const char *pd_text,
   }
 
   int max_unique = 2 * diagram->crossing_count;
-  int *labels = (int *)malloc((size_t)max_unique * sizeof(int));
-  int *counts = (int *)calloc((size_t)max_unique, sizeof(int));
-  if (labels == NULL || counts == NULL) {
-    free(labels);
-    free(counts);
-    PDDiagram_free(diagram);
-    snprintf(reason, reason_size, "Out of memory while normalizing PD edges.");
-    return false;
-  }
+  int *labels = (int *)kh_malloc((size_t)max_unique * sizeof(int));
+  int *counts = (int *)kh_calloc((size_t)max_unique, sizeof(int));
 
   int unique = 0;
   for (int i = 0; i < diagram->crossing_count; i++) {
@@ -219,22 +204,20 @@ static Komplex *make_local_crossing(int sign) {
 
   Cap *zero = Cap_create(4, 0);
   Cap *one = Cap_create(4, 0);
-  if (zero == NULL || one == NULL) return NULL;
+
   zero->pairings[0] = 1; zero->pairings[1] = 0;
   zero->pairings[2] = 3; zero->pairings[3] = 2;
   one->pairings[0] = 3; one->pairings[3] = 0;
   one->pairings[1] = 2; one->pairings[2] = 1;
 
-  SmoothingColumn *c0 = (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
-  SmoothingColumn *c1 = (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
-  if (c0 == NULL || c1 == NULL) return NULL;
+  SmoothingColumn *c0 = SmoothingColumn_create();
+  SmoothingColumn *c1 = SmoothingColumn_create();
+
   c0->n = c1->n = 1;
-  c0->numbers = (int *)malloc(sizeof(int));
-  c1->numbers = (int *)malloc(sizeof(int));
-  c0->smoothings = (Cap **)malloc(sizeof(Cap *));
-  c1->smoothings = (Cap **)malloc(sizeof(Cap *));
-  if (c0->numbers == NULL || c1->numbers == NULL ||
-      c0->smoothings == NULL || c1->smoothings == NULL) return NULL;
+  c0->numbers = (int *)kh_malloc(sizeof(int));
+  c1->numbers = (int *)kh_malloc(sizeof(int));
+  c0->smoothings = (Cap **)kh_malloc(sizeof(Cap *));
+  c1->smoothings = (Cap **)kh_malloc(sizeof(Cap *));
 
   c0->smoothings[0] = zero;
   c1->smoothings[0] = one;
@@ -244,17 +227,17 @@ static Komplex *make_local_crossing(int sign) {
   k->chain_groups[1] = c1;
 
   CannedCobordismImplData *impl = CannedCobordismImpl_create(zero, one);
-  if (impl == NULL) return NULL;
+
   impl->ncc = impl->nbc;
   for (int i = 0; i < impl->nbc; i++) impl->connectedComponent[i] = i;
-  impl->dots = (int *)calloc((size_t)impl->ncc, sizeof(int));
-  impl->genus = (int *)calloc((size_t)impl->ncc, sizeof(int));
-  if (impl->ncc > 0 && (impl->dots == NULL || impl->genus == NULL)) return NULL;
+  impl->dots = (int *)kh_calloc((size_t)impl->ncc, sizeof(int));
+  impl->genus = (int *)kh_calloc((size_t)impl->ncc, sizeof(int));
 
   CannedCobordism *saddle = CannedCobordismImpl_as_CannedCobordism(impl);
   CobMatrix *d = CobMatrix_create(c0, c1, true);
-  if (saddle == NULL || d == NULL) return NULL;
+
   CobMatrix_putEntry(d, 0, 0, LCCC_createSingle(saddle, 1));
+  CannedCobordism_free(saddle);
   k->differentials[0] = d;
   return k;
 }
@@ -262,15 +245,15 @@ static Komplex *make_local_crossing(int sign) {
 static Komplex *make_arc_complex(void) {
   Komplex *k = Komplex_create(1);
   if (k == NULL) return NULL;
-  SmoothingColumn *c = (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
-  if (c == NULL) return NULL;
+  SmoothingColumn *c = SmoothingColumn_create();
+
   c->n = 1;
-  c->numbers = (int *)malloc(sizeof(int));
-  c->smoothings = (Cap **)malloc(sizeof(Cap *));
-  if (c->numbers == NULL || c->smoothings == NULL) return NULL;
+  c->numbers = (int *)kh_malloc(sizeof(int));
+  c->smoothings = (Cap **)kh_malloc(sizeof(Cap *));
+
   c->numbers[0] = 0;
   c->smoothings[0] = Cap_create(2, 0);
-  if (c->smoothings[0] == NULL) return NULL;
+
   c->smoothings[0]->pairings[0] = 1;
   c->smoothings[0]->pairings[1] = 0;
   k->chain_groups[0] = c;
@@ -280,15 +263,15 @@ static Komplex *make_arc_complex(void) {
 static Komplex *make_unknot_complex(void) {
   Komplex *k = Komplex_create(1);
   if (k == NULL) return NULL;
-  SmoothingColumn *c = (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
-  if (c == NULL) return NULL;
+  SmoothingColumn *c = SmoothingColumn_create();
+
   c->n = 1;
-  c->numbers = (int *)malloc(sizeof(int));
-  c->smoothings = (Cap **)malloc(sizeof(Cap *));
-  if (c->numbers == NULL || c->smoothings == NULL) return NULL;
+  c->numbers = (int *)kh_malloc(sizeof(int));
+  c->smoothings = (Cap **)kh_malloc(sizeof(Cap *));
+
   c->numbers[0] = 0;
   c->smoothings[0] = Cap_create(0, 1);
-  if (c->smoothings[0] == NULL) return NULL;
+
   k->chain_groups[0] = c;
   return k;
 }
@@ -595,34 +578,10 @@ static int choose_crossing(const PDDiagram *diagram, const int *frontier,
   }
 
   bool *work_seen =
-      (bool *)malloc((size_t)diagram->edge_count * sizeof(bool));
+      (bool *)kh_malloc((size_t)diagram->edge_count * sizeof(bool));
   bool *work_done =
-      (bool *)malloc((size_t)diagram->crossing_count * sizeof(bool));
-  if (work_seen == NULL || work_done == NULL) {
-    /* Planning is an optimization, not a correctness requirement.  If the
-     * tiny planning-state allocation fails, preserve the previous one-step
-     * greedy behaviour instead of failing the PD scan. */
-    free(work_seen);
-    free(work_done);
+      (bool *)kh_malloc((size_t)diagram->crossing_count * sizeof(bool));
 
-    int best = -1;
-    int best_join = -1;
-    for (int i = 0; i < diagram->crossing_count; i++) {
-      if (done[i]) continue;
-      int jc = 0, fs = 0, cs = 0;
-      if (!attachment(frontier, frontier_count, diagram->crossings[i], seen,
-                      &jc, &fs, &cs))
-        continue;
-      if (jc > best_join) {
-        best = i;
-        best_join = jc;
-        *join_count = jc;
-        *frontier_start = fs;
-        *crossing_start = cs;
-      }
-    }
-    return best;
-  }
   memcpy(work_seen, seen, (size_t)diagram->edge_count * sizeof(bool));
   memcpy(work_done, done, (size_t)diagram->crossing_count * sizeof(bool));
 
@@ -714,8 +673,7 @@ static int *updated_frontier(const int *frontier, int frontier_count,
                              int crossing_start, int join_count,
                              int *new_count) {
   *new_count = frontier_count + 4 - 2 * join_count;
-  int *out = *new_count > 0 ? (int *)malloc((size_t)*new_count * sizeof(int)) : NULL;
-  if (*new_count > 0 && out == NULL) return NULL;
+  int *out = *new_count > 0 ? (int *)kh_malloc((size_t)*new_count * sizeof(int)) : NULL;
 
   int n = 0;
   for (; n < frontier_count - join_count; n++)
@@ -741,8 +699,8 @@ static bool has_duplicate(const int *frontier, int count) {
 
 static bool remove_cyclic_pair(int *frontier, int *count, int start) {
   int old = *count;
-  int *tmp = old > 2 ? (int *)malloc((size_t)(old - 2) * sizeof(int)) : NULL;
-  if (old > 2 && tmp == NULL) return false;
+  int *tmp = old > 2 ? (int *)kh_malloc((size_t)(old - 2) * sizeof(int)) : NULL;
+
   int n = 0;
   for (int k = 2; k < old; k++) tmp[n++] = frontier[(start + k) % old];
   for (int i = 0; i < n; i++) frontier[i] = tmp[i];
@@ -811,13 +769,8 @@ Komplex *PDScanner_build(const PDDiagram *diagram, bool reorder_crossings,
   if (diagram == NULL) return NULL;
   if (diagram->crossing_count == 0) return make_unknot_complex();
 
-  bool *seen = (bool *)calloc((size_t)diagram->edge_count, sizeof(bool));
-  bool *done = (bool *)calloc((size_t)diagram->crossing_count, sizeof(bool));
-  if (seen == NULL || done == NULL) {
-    free(seen); free(done);
-    snprintf(reason, reason_size, "Out of memory while starting the PD scan.");
-    return NULL;
-  }
+  bool *seen = (bool *)kh_calloc((size_t)diagram->edge_count, sizeof(bool));
+  bool *done = (bool *)kh_calloc((size_t)diagram->crossing_count, sizeof(bool));
 
   int *frontier = NULL;
   int frontier_count = 0;
@@ -865,11 +818,7 @@ Komplex *PDScanner_build(const PDDiagram *diagram, bool reorder_crossings,
     int *new_frontier = updated_frontier(
         frontier, frontier_count, frontier_start, diagram->crossings[best],
         crossing_start, join_count, &new_count);
-    if (new_count > 0 && new_frontier == NULL) {
-      snprintf(reason, reason_size, "Out of memory while updating the PD frontier.");
-      free(frontier); free(seen); free(done); Komplex_free(current);
-      return NULL;
-    }
+
     free(frontier);
     frontier = new_frontier;
     frontier_count = new_count;

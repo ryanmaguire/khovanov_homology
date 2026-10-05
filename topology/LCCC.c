@@ -1,3 +1,4 @@
+#include "../KhMemory.h"
 /*
  *  LCCC.c
  *
@@ -52,7 +53,7 @@ static bool is_prime_int(int p) {
 static int normalize_i64(int64_t value) {
   if (g_coeff_mode == KH_COEFF_Z) {
     if (value > INT_MAX || value < INT_MIN)
-      abort();
+      kh_fatal("integral cobordism coefficient exceeds int range");
     return (int)value;
   }
 
@@ -164,11 +165,10 @@ bool LCCC_coeffInverse(int value, int *inverse_out) {
  *  Purpose:    Allocate a new LCCCTerm node.
  */
 static LCCCTerm *create_term(CannedCobordism *cc, int coeff) {
-  LCCCTerm *t = (LCCCTerm *)malloc(sizeof(LCCCTerm));
-  if (t == NULL)
-    return NULL;
+  LCCCTerm *t = (LCCCTerm *)kh_malloc(sizeof(LCCCTerm));
+
   t->coeff = LCCC_coeffNormalize(coeff);
-  t->cobordism = cc;
+  t->cobordism = CannedCobordism_retain(cc);
   t->next = NULL;
   return t;
 }
@@ -222,6 +222,7 @@ static void lccc_add_term(LCCC *lc, CannedCobordism *cc, int coeff) {
         else
           lc->head = cur->next;
 
+        CannedCobordism_free(cur->cobordism);
         free(cur);
         lc->count--;
       }
@@ -234,8 +235,7 @@ static void lccc_add_term(LCCC *lc, CannedCobordism *cc, int coeff) {
   }
 
   LCCCTerm *t = create_term(cc, coeff);
-  if (t == NULL)
-    return;
+
   t->next = lc->head;
   lc->head = t;
   lc->count++;
@@ -246,7 +246,7 @@ static void lccc_add_term(LCCC *lc, CannedCobordism *cc, int coeff) {
  * ================================================================ */
 
 LCCC *LCCC_createZero(void) {
-  LCCC *lc = (LCCC *)malloc(sizeof(LCCC));
+  LCCC *lc = (LCCC *)kh_malloc(sizeof(LCCC));
   lc->head = NULL;
   lc->count = 0;
   return lc;
@@ -254,16 +254,11 @@ LCCC *LCCC_createZero(void) {
 
 LCCC *LCCC_createSingle(CannedCobordism *cc, int coeff) {
   LCCC *lc = LCCC_createZero();
-  if (lc == NULL)
-    return NULL;
 
   coeff = LCCC_coeffNormalize(coeff);
   if (cc != NULL && !LCCC_coeffIsZero(coeff)) {
     LCCCTerm *t = create_term(cc, coeff);
-    if (t == NULL) {
-      free(lc);
-      return NULL;
-    }
+
     lc->head = t;
     lc->count = 1;
   }
@@ -292,7 +287,7 @@ void LCCC_free(LCCC *lc) {
   LCCCTerm *cur = lc->head;
   while (cur != NULL) {
     LCCCTerm *next = cur->next;
-    //We do NOT free cur->cobordism -- ownership is external
+    CannedCobordism_free(cur->cobordism);
     free(cur);
     cur = next;
   }
@@ -325,9 +320,11 @@ LCCC *LCCC_compose(LCCC *a, LCCC *b) {
     while (bj != NULL) {
       if (ai->cobordism != NULL && bj->cobordism != NULL) {
         CannedCobordism *composed = CannedCobordism_compose(ai->cobordism, bj->cobordism);
+        if (composed == NULL) kh_fatal("cobordism composition failed");
         if (composed != NULL) {
           int new_coeff = LCCC_coeffMultiply(ai->coeff, bj->coeff);
           lccc_add_term(result, composed, new_coeff);
+          CannedCobordism_free(composed);
         }
       }
       bj = bj->next;
@@ -342,8 +339,6 @@ LCCC *LCCC_multiply(LCCC *a, RingElement *coeff) {
     return LCCC_createZero();
 
   LCCC *result = LCCC_clone(a);
-  if (result == NULL)
-    return NULL;
 
   LCCCTerm *cur = result->head;
   while (cur != NULL) {
@@ -364,7 +359,7 @@ LCCC *LCCC_reduce(LCCC *a) {
 
   for (LCCCTerm *cur = a->head; cur != NULL; cur = cur->next) {
     if (cur->cobordism == NULL || cur->cobordism->impl_data == NULL)
-      continue;
+      kh_fatal("missing cobordism in LCCC reduction");
 
     CannedCobordismImplData *impl =
         (CannedCobordismImplData *)cur->cobordism->impl_data;
@@ -379,13 +374,8 @@ LCCC *LCCC_reduce(LCCC *a) {
     int nbc = impl->nbc;
     int ncc = impl->ncc;
 
-    int *base_dots = (int *)calloc((size_t)nbc, sizeof(int));
-    int *more_work = (int *)malloc((size_t)ncc * sizeof(int));
-    if (base_dots == NULL || more_work == NULL) {
-      free(base_dots);
-      free(more_work);
-      continue;
-    }
+    int *base_dots = (int *)kh_calloc((size_t)nbc, sizeof(int));
+    int *more_work = (int *)kh_malloc((size_t)ncc * sizeof(int));
 
     int nmore = 0;
 
@@ -481,20 +471,9 @@ LCCC *LCCC_reduce(LCCC *a) {
      * except b_k.
      */
     int pattern_count = 1;
-    int **patterns = (int **)malloc(sizeof(int *));
-    if (patterns == NULL) {
-      free(base_dots);
-      free(more_work);
-      continue;
-    }
+    int **patterns = (int **)kh_malloc(sizeof(int *));
 
-    patterns[0] = (int *)malloc((size_t)nbc * sizeof(int));
-    if (patterns[0] == NULL) {
-      free(patterns);
-      free(base_dots);
-      free(more_work);
-      continue;
-    }
+    patterns[0] = (int *)kh_malloc((size_t)nbc * sizeof(int));
 
     memcpy(patterns[0], base_dots, (size_t)nbc * sizeof(int));
 
@@ -502,22 +481,14 @@ LCCC *LCCC_reduce(LCCC *a) {
       int ci = more_work[mw];
       int bcount = impl->bc_sizes[ci];
 
-      int new_count = pattern_count * bcount;
-      int **new_patterns = (int **)malloc((size_t)new_count * sizeof(int *));
-      if (new_patterns == NULL) {
-        kill = true;
-        break;
-      }
+      int new_count = kh_int((int64_t)pattern_count * bcount);
+      int **new_patterns = (int **)kh_malloc((size_t)new_count * sizeof(int *));
 
       int out_idx = 0;
 
       for (int p = 0; p < pattern_count; p++) {
         for (int choice = 0; choice < bcount; choice++) {
-          int *dots = (int *)malloc((size_t)nbc * sizeof(int));
-          if (dots == NULL) {
-            kill = true;
-            break;
-          }
+          int *dots = (int *)kh_malloc((size_t)nbc * sizeof(int));
 
           memcpy(dots, patterns[p], (size_t)nbc * sizeof(int));
 
@@ -553,13 +524,15 @@ LCCC *LCCC_reduce(LCCC *a) {
         free(patterns[p]);
       }
       free(patterns);
+      patterns = NULL;
 
       if (kill) {
         for (int p = 0; p < out_idx; p++) {
           free(new_patterns[p]);
         }
         free(new_patterns);
-        break;
+        pattern_count = 0;
+        kh_fatal("invalid neck-cutting boundary data");
       }
 
       patterns = new_patterns;
@@ -571,8 +544,6 @@ LCCC *LCCC_reduce(LCCC *a) {
         CannedCobordismImplData *new_impl =
             CannedCobordismImpl_create(impl->top, impl->bottom);
 
-        if (new_impl == NULL)
-          continue;
 
         new_impl->hpower = impl->hpower;
         new_impl->ncc = new_impl->nbc;
@@ -581,13 +552,9 @@ LCCC *LCCC_reduce(LCCC *a) {
           new_impl->connectedComponent[bc] = bc;
         }
 
-        new_impl->dots = (int *)calloc((size_t)new_impl->ncc, sizeof(int));
-        new_impl->genus = (int *)calloc((size_t)new_impl->ncc, sizeof(int));
+        new_impl->dots = (int *)kh_calloc((size_t)new_impl->ncc, sizeof(int));
+        new_impl->genus = (int *)kh_calloc((size_t)new_impl->ncc, sizeof(int));
 
-        if (new_impl->dots == NULL || new_impl->genus == NULL) {
-          CannedCobordismImpl_free(new_impl);
-          continue;
-        }
 
         for (int bc = 0; bc < new_impl->nbc; bc++) {
           new_impl->dots[bc] = patterns[p][bc];
@@ -596,6 +563,7 @@ LCCC *LCCC_reduce(LCCC *a) {
 
         CannedCobordism *new_cc = CannedCobordismImpl_as_CannedCobordism(new_impl);
         lccc_add_term(ret, new_cc, coeff_value);
+        CannedCobordism_free(new_cc);
       }
     }
 
@@ -628,8 +596,6 @@ LCCC *LCCC_invert(LCCC *lc) {
 
 LCCC *LCCC_negate(LCCC *lc) {
   LCCC *result = LCCC_clone(lc);
-  if (result == NULL)
-    return NULL;
 
   LCCCTerm *cur = result->head;
   while (cur != NULL) {
@@ -651,8 +617,9 @@ LCCC *LCCC_capOffTop(LCCC *lc, Cap *new_top, bool add_dot) {
   for (LCCCTerm *cur = lc->head; cur != NULL; cur = cur->next) {
     CannedCobordism *capped_cc =
         CannedCobordismImpl_capOffTop(cur->cobordism, new_top, add_dot);
-    if (capped_cc != NULL)
-      lccc_add_term(res, capped_cc, cur->coeff);
+    if (!capped_cc) kh_fatal("delooping cap composition failed");
+    lccc_add_term(res, capped_cc, cur->coeff);
+    CannedCobordism_free(capped_cc);
   }
 
   LCCC *reduced_res = LCCC_reduce(res);
@@ -668,8 +635,9 @@ LCCC *LCCC_cupOnBottom(LCCC *lc, Cap *new_bottom, bool add_dot) {
   for (LCCCTerm *cur = lc->head; cur != NULL; cur = cur->next) {
     CannedCobordism *cupped_cc =
         CannedCobordismImpl_cupOnBottom(cur->cobordism, new_bottom, add_dot);
-    if (cupped_cc != NULL)
-      lccc_add_term(res, cupped_cc, cur->coeff);
+    if (!cupped_cc) kh_fatal("delooping cup composition failed");
+    lccc_add_term(res, cupped_cc, cur->coeff);
+    CannedCobordism_free(cupped_cc);
   }
 
   LCCC *reduced_res = LCCC_reduce(res);

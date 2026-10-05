@@ -33,11 +33,17 @@ typedef struct MatrixRow {
 } MatrixRow;
 
 typedef struct SmoothingColumn {
+    size_t references;
     int n;
     int* numbers; // Array of integers
     Cap** smoothings; // Array of Cap pointers
 } SmoothingColumn;
 
+/* New columns start with one owned reference. Matrices retain endpoints;
+ * complexes own their chain-group references. A clone retains each Cap. */
+SmoothingColumn* SmoothingColumn_create(void);
+SmoothingColumn* SmoothingColumn_retain(SmoothingColumn* col);
+void SmoothingColumn_free(SmoothingColumn* col);
 SmoothingColumn* SmoothingColumn_clone(SmoothingColumn* col);
 bool SmoothingColumn_equals(SmoothingColumn* a, SmoothingColumn* b);
 

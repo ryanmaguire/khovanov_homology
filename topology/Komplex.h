@@ -1,7 +1,9 @@
 #ifndef KOMPLEX_H
 #define KOMPLEX_H
 #include "CobMatrix.h"
+#ifdef KH_ENABLE_MORSE_ORACLE
 #include "MorseOracle.h"
+#endif
 /*
  * Represents the Bar-Natan Khovanov Chain Complex
  *
@@ -55,7 +57,9 @@ bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
  *  Returns:
  *      Number of successful reductions applied.
  */
+#ifdef KH_ENABLE_MORSE_ORACLE
 int Komplex_reduce_with_oracle(Komplex *k, const CollapseSchedule *schedule);
+#endif
 /*
  *  Purpose:
  *      Apply greedy Gaussian elimination. Scans all differentials

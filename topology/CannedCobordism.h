@@ -31,6 +31,7 @@ typedef struct CannedCobordism CannedCobordism;
  * reversal, and memory cleanup.
  */
 struct CannedCobordism {
+  size_t references;
   Cap *source;
   Cap *target;
   void *impl_data;
@@ -50,7 +51,8 @@ struct CannedCobordism {
   /* vtable function: reverse maps */
   void (*reverseMaps)(CannedCobordism *self);
 
-  /* vtable function: free implementation */
+  /* Destructor: invoked by CannedCobordism_free for the last reference.
+   * Call CannedCobordism_free, not free_impl directly. */
   void (*free_impl)(CannedCobordism *self);
 };
 
@@ -89,9 +91,11 @@ static inline void CannedCobordism_reverseMaps(CannedCobordism *cc) {
   cc->reverseMaps(cc);
 }
 
+CannedCobordism *CannedCobordism_retain(CannedCobordism *cc);
 static inline void CannedCobordism_free(CannedCobordism *cc) {
   if (cc == NULL)
     return;
+  if (--cc->references) return;
   if (cc->free_impl)
     cc->free_impl(cc);
 }

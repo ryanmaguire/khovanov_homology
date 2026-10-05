@@ -1,3 +1,4 @@
+#include "../KhMemory.h"
 #include "DTtoPD.h"
 #include "PDScanner.h"
 
@@ -153,7 +154,7 @@ bool DTtoPD_decodeAlphabetical(const char *code,
   if (count == 0)
     return true;
 
-  int *dt = (int *)malloc((size_t)count * sizeof(int));
+  int *dt = (int *)kh_malloc((size_t)count * sizeof(int));
   if (dt == NULL) {
     set_reason(reason, reason_size, "Out of memory while decoding alphabetical DT code.");
     return false;
@@ -296,22 +297,12 @@ static bool find_planar_signs(const int *dt, int n, int *signs,
   s.dart_count = 4 * n;
   s.signs = signs;
 
-  s.lower_occurrence = (int *)malloc((size_t)n * sizeof(int));
-  s.upper_occurrence = (int *)malloc((size_t)n * sizeof(int));
-  s.alpha = (int *)malloc((size_t)s.dart_count * sizeof(int));
-  s.sigma = (int *)malloc((size_t)s.dart_count * sizeof(int));
-  s.seen = (unsigned char *)malloc((size_t)s.dart_count * sizeof(unsigned char));
+  s.lower_occurrence = (int *)kh_malloc((size_t)n * sizeof(int));
+  s.upper_occurrence = (int *)kh_malloc((size_t)n * sizeof(int));
+  s.alpha = (int *)kh_malloc((size_t)s.dart_count * sizeof(int));
+  s.sigma = (int *)kh_malloc((size_t)s.dart_count * sizeof(int));
+  s.seen = (unsigned char *)kh_malloc((size_t)s.dart_count * sizeof(unsigned char));
 
-  if (s.lower_occurrence == NULL || s.upper_occurrence == NULL ||
-      s.alpha == NULL || s.sigma == NULL || s.seen == NULL) {
-    free(s.lower_occurrence);
-    free(s.upper_occurrence);
-    free(s.alpha);
-    free(s.sigma);
-    free(s.seen);
-    set_reason(reason, reason_size, "Out of memory while reconstructing DT planar embedding.");
-    return false;
-  }
 
   for (int i = 0; i < n; i++) {
     int odd_occurrence = 2 * i;            /* DT odd label 2i+1, converted to 0-based */
@@ -374,11 +365,7 @@ static bool validate_built_pd(const PDDiagram *diagram,
     return true;
 
   int edge_count = diagram->edge_count;
-  int *uses = (int *)calloc((size_t)edge_count, sizeof(int));
-  if (uses == NULL) {
-    set_reason(reason, reason_size, "Out of memory while validating reconstructed PD.");
-    return false;
-  }
+  int *uses = (int *)kh_calloc((size_t)edge_count, sizeof(int));
 
   for (int i = 0; i < diagram->crossing_count; i++) {
     if (diagram->signs[i] != 1 && diagram->signs[i] != -1) {
@@ -436,14 +423,9 @@ bool DTtoPD_fromNumeric(PDDiagram *diagram,
   diagram->crossing_count = crossing_count;
   diagram->edge_count = 2 * crossing_count;
   diagram->crossings =
-      (int (*)[4])malloc((size_t)crossing_count * sizeof(*diagram->crossings));
-  diagram->signs = (int *)malloc((size_t)crossing_count * sizeof(int));
+      (int (*)[4])kh_malloc((size_t)crossing_count * sizeof(*diagram->crossings));
+  diagram->signs = (int *)kh_malloc((size_t)crossing_count * sizeof(int));
 
-  if (diagram->crossings == NULL || diagram->signs == NULL) {
-    PDDiagram_free(diagram);
-    set_reason(reason, reason_size, "Out of memory while allocating reconstructed PD.");
-    return false;
-  }
 
   if (!find_planar_signs(dt, crossing_count, diagram->signs,
                          reason, reason_size)) {

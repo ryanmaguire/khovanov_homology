@@ -11,8 +11,10 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 
 typedef struct Cap {
+  size_t references; /* Owned references; use Cap_retain/Cap_free. */
   int n;         /* Number of boundary edges/points                     */
   int ncycles;   /* Number of interior cycles                           */
   int *pairings; /* Array of size n: pairings[i] = partner of edge i    */
@@ -31,7 +33,7 @@ typedef struct Cap {
  * Output:
  *      Cap pointer
  * Output description:
- *      Returns a heap-allocated Cap pointer. NULL on allocation failure.
+ *      Returns one owned reference. Allocation failure terminates the solver.
  * Method:
  *      malloc the struct and pairings array; set n and ncycles.
  */
@@ -39,7 +41,7 @@ Cap *Cap_create(int n, int ncycles);
 
 /*
  * Purpose:
- *      Frees a Cap and its pairings array.
+ *      Releases a Cap reference, freeing the last reference and its pairings array.
  * Arguments:
  *      cap
  * Argument descriptions:
@@ -51,6 +53,7 @@ Cap *Cap_create(int n, int ncycles);
  * Method:
  *      Free pairings, then free the struct.
  */
+Cap *Cap_retain(Cap *cap);
 void Cap_free(Cap *cap);
 
 /*

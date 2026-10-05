@@ -19,7 +19,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-
 /*
  *  CannedCobordismImplData
  *
@@ -370,6 +369,7 @@ void CannedCobordismImpl_free(CannedCobordismImplData *impl);
  *      closed components with dots or genus may contribute nontrivial scalar
  *      factors.
  */
+/* Returns an owned reference, including when no stripping is needed. */
 CannedCobordism *CannedCobordismImpl_stripClosed(CannedCobordism *cc);
 CannedCobordism *CannedCobordismImpl_capOffTop(CannedCobordism *cc, Cap *new_top, bool add_dot);
 CannedCobordism *CannedCobordismImpl_cupOnBottom(CannedCobordism *cc, Cap *new_bottom, bool add_dot);

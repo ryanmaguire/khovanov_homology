@@ -1,11 +1,13 @@
+#include "../KhMemory.h"
 /*
  *  Komplex.c
  *
  *  Bar-Natan Khovanov Chain Complex with full Schur complement
- *  Gaussian elimination, guided by the topological Morse oracle.
+ *  Gaussian elimination. Optional oracle scheduling is compiled only with
+ *  KH_ENABLE_MORSE_ORACLE.
  *
  *  Purpose:
- *      Implements the algebraic Phase 2 of the FPT algorithm.
+ *      Implements scanning-complex simplification.
  *      The blockReductionLemma performs the complete Schur complement
  *      update D' = D - C·φ⁻¹·B on the differential, and propagates
  *      generator removal to adjacent differentials.
@@ -39,6 +41,8 @@ static void CobMatrix_free_with_known_row_count(CobMatrix *m, int row_count) {
     free(m->entries);
   }
 
+  SmoothingColumn_free(m->source);
+  SmoothingColumn_free(m->target);
   free(m);
 }
 
@@ -46,14 +50,15 @@ static void CobMatrix_free_with_known_row_count(CobMatrix *m, int row_count) {
  *  Construction / Destruction
  * ================================================================ */
 Komplex *Komplex_create(int length) {
-  Komplex *k = (Komplex *)malloc(sizeof(Komplex));
+  if (length < 1) kh_fatal("invalid complex length");
+  Komplex *k = (Komplex *)kh_malloc(sizeof(Komplex));
   k->length = length;
   if (length > 1) {
-    k->differentials = (CobMatrix **)calloc(length - 1, sizeof(CobMatrix *));
+    k->differentials = (CobMatrix **)kh_calloc(length - 1, sizeof(CobMatrix *));
   } else {
     k->differentials = NULL;
   }
-  k->chain_groups = (SmoothingColumn **)calloc(length, sizeof(SmoothingColumn *));
+  k->chain_groups = (SmoothingColumn **)kh_calloc(length, sizeof(SmoothingColumn *));
   return k;
 }
 void Komplex_free(Komplex *k) {
@@ -67,9 +72,8 @@ void Komplex_free(Komplex *k) {
   free(k->differentials);
   
   if (k->chain_groups) {
-    /* Ownership of SmoothingColumns is tricky; if they are managed by chain_groups, free them.
-     * But they might be aliased by CobMatrix source/target.
-     * For now we just free the array. */
+    for (int i = 0; i < k->length; ++i)
+      SmoothingColumn_free(k->chain_groups[i]);
     free(k->chain_groups);
   }
   free(k);
@@ -162,7 +166,7 @@ bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
   /* Unpack the pivot column: C[i] = D[i][source_col] for i ≠ target_row */
   int n_rows = D->target->n;
   int n_cols = D->source->n;
-  LCCC **C_col = (LCCC **)calloc((size_t)n_rows, sizeof(LCCC *));
+  LCCC **C_col = (LCCC **)kh_calloc((size_t)n_rows, sizeof(LCCC *));
   for (int i = 0; i < n_rows; i++) {
     MatrixEntry *cur = D->entries[i].head;
     while (cur != NULL) {
@@ -212,8 +216,10 @@ bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
   CobMatrix *removed_row = CobMatrix_extractRow(D, target_row);
   CobMatrix_free(removed_col);
   CobMatrix_free(removed_row);
-  k->chain_groups[chain_idx] = D->source;
-  k->chain_groups[chain_idx + 1] = D->target;
+  SmoothingColumn_free(k->chain_groups[chain_idx]);
+  SmoothingColumn_free(k->chain_groups[chain_idx + 1]);
+  k->chain_groups[chain_idx] = SmoothingColumn_retain(D->source);
+  k->chain_groups[chain_idx + 1] = SmoothingColumn_retain(D->target);
   /* ---- Step 6: Update adjacent differential d_{chain_idx - 1} ---- */
   /*
    * d_{prev} maps C_{chain_idx-1} → C_{chain_idx}.
@@ -226,7 +232,8 @@ bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
     if (source_col < d_prev->target->n) {
       CobMatrix *prev_removed = CobMatrix_extractRow(d_prev, source_col);
       CobMatrix_free(prev_removed);
-      d_prev->target = k->chain_groups[chain_idx];
+      SmoothingColumn_free(d_prev->target);
+      d_prev->target = SmoothingColumn_retain(k->chain_groups[chain_idx]);
     }
   }
   /* ---- Step 7: Update adjacent differential d_{chain_idx + 1} ---- */
@@ -241,7 +248,8 @@ bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
     if (target_row < d_next->source->n) {
       CobMatrix *next_removed = CobMatrix_extractColumn(d_next, target_row);
       CobMatrix_free(next_removed);
-      d_next->source = k->chain_groups[chain_idx + 1];
+      SmoothingColumn_free(d_next->source);
+      d_next->source = SmoothingColumn_retain(k->chain_groups[chain_idx + 1]);
     }
   }
   return true;
@@ -249,6 +257,7 @@ bool Komplex_blockReductionLemma(Komplex *k, int chain_idx, int source_col,
 /* ================================================================
  *  Oracle-Driven Reduction
  * ================================================================ */
+#ifdef KH_ENABLE_MORSE_ORACLE
 int Komplex_reduce_with_oracle(Komplex *k, const CollapseSchedule *schedule) {
   int reductions = 0;
   for (int step = 0; step < schedule->count; step++) {
@@ -264,6 +273,7 @@ int Komplex_reduce_with_oracle(Komplex *k, const CollapseSchedule *schedule) {
   }
   return reductions;
 }
+#endif
 /* ================================================================
  *  Greedy Algebraic Reduction
  * ================================================================ */
@@ -332,14 +342,9 @@ void Komplex_deloop(Komplex *k) {
         continue;
 
       int old_n = col->n;
-      int new_n = old_n + 1;
-      int *new_numbers = (int *)malloc((size_t)new_n * sizeof(int));
-      Cap **new_smoothings = (Cap **)malloc((size_t)new_n * sizeof(Cap *));
-      if (new_numbers == NULL || new_smoothings == NULL) {
-        free(new_numbers);
-        free(new_smoothings);
-        return;
-      }
+      int new_n = kh_int((int64_t)old_n + 1);
+      int *new_numbers = (int *)kh_malloc((size_t)new_n * sizeof(int));
+      Cap **new_smoothings = (Cap **)kh_malloc((size_t)new_n * sizeof(Cap *));
 
       memcpy(new_numbers, col->numbers, (size_t)old_n * sizeof(int));
       memcpy(new_smoothings, col->smoothings, (size_t)old_n * sizeof(Cap *));
@@ -352,18 +357,19 @@ void Komplex_deloop(Komplex *k) {
 
       Cap *base_cap = col->smoothings[split_idx];
       if (base_cap == NULL)
-        return;
+        kh_fatal("missing cap in delooping");
       Cap *v_plus_cap = Cap_removeCycle(base_cap);
       Cap *v_minus_cap = Cap_removeCycle(base_cap);
       if (v_plus_cap == NULL || v_minus_cap == NULL)
-        return;
+        kh_fatal("failed to remove circle in delooping");
 
       col->smoothings[split_idx] = v_plus_cap;
       col->smoothings[old_n] = v_minus_cap;
 
+      Cap_free(base_cap);
       int base_shift = col->numbers[split_idx];
-      col->numbers[split_idx] = base_shift + 1;
-      col->numbers[old_n] = base_shift - 1;
+      col->numbers[split_idx] = kh_int((int64_t)base_shift + 1);
+      col->numbers[old_n] = kh_int((int64_t)base_shift - 1);
 
       if (h > 0 && k->differentials[h - 1] != NULL) {
         CobMatrix *old_d_in = k->differentials[h - 1];
@@ -453,7 +459,7 @@ bool Komplex_verify_d_squared(const Komplex *k) {
     /* Compute d_{i+1} ∘ d_i */
     CobMatrix *composed = CobMatrix_compose(d_ip1, d_i);
     if (composed == NULL)
-      continue;
+      return false;
     CobMatrix_reduce(composed);
     if (!CobMatrix_isZero(composed)) {
       CobMatrix_free(composed);

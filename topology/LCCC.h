@@ -112,6 +112,8 @@ LCCC *LCCC_createZero(void);
  * normalized according to the active coefficient mode; a zero coefficient
  * produces the zero LCCC.
  */
+/* Borrows cc and retains one reference per stored term.
+ * Clone/add/reduce results own their terms; LCCC_free releases those references. */
 LCCC *LCCC_createSingle(CannedCobordism *cc, int coeff);
 
 /* Deep-clone an LCCC list; cobordism pointers remain shared. */

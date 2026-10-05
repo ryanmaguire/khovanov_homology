@@ -4,7 +4,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-/* Forward declaration from PDScanner.h. */
 typedef struct PDDiagram PDDiagram;
 
 /*
@@ -16,12 +15,12 @@ typedef struct PDDiagram PDDiagram;
 #define DTTOPD_MAX_CROSSINGS 20
 
 /*
- * Decode compact alphabetical Dowker-Thistlethwaite notation.
+ * We decode the alphabetical Dowker-Thistlethwaite notation.
  *
  *   a,b,c,...  ->  +2,+4,+6,...
  *   A,B,C,...  ->  -2,-4,-6,...
  *
- * ASCII whitespace is ignored.  On success, *dt_out is heap allocated and
+ * On success, *dt_out is heap allocated and
  * must be freed by the caller with free().
  */
 bool DTtoPD_decodeAlphabetical(const char *code,

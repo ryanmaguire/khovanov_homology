@@ -1,3 +1,4 @@
+#include "../KhMemory.h"
 
 #include "Komplex.h"
 #include "CannedCobordismImpl.h"
@@ -9,18 +10,13 @@ static SmoothingColumn *tensor_column(SmoothingColumn *a, int astart,
                                       int join_count) {
   if (a == NULL || b == NULL) return NULL;
 
-  SmoothingColumn *out = (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
-  if (out == NULL) return NULL;
-  out->n = a->n * b->n;
-  out->numbers = out->n > 0 ? (int *)malloc((size_t)out->n * sizeof(int)) : NULL;
+  SmoothingColumn *out = SmoothingColumn_create();
+
+  out->n = kh_int((int64_t)a->n * b->n);
+  out->numbers = out->n > 0 ? (int *)kh_malloc((size_t)out->n * sizeof(int)) : NULL;
   out->smoothings =
-      out->n > 0 ? (Cap **)malloc((size_t)out->n * sizeof(Cap *)) : NULL;
-  if (out->n > 0 && (out->numbers == NULL || out->smoothings == NULL)) {
-    free(out->numbers);
-    free(out->smoothings);
-    free(out);
-    return NULL;
-  }
+      out->n > 0 ? (Cap **)kh_malloc((size_t)out->n * sizeof(Cap *)) : NULL;
+
   int index = 0;
   for (int i = 0; i < a->n; i++) {
     for (int j = 0; j < b->n; j++) {
@@ -48,7 +44,6 @@ static LCCC *compose_lccc_with_identity(const LCCC *lc, int lc_start,
   if (identity == NULL) return NULL;
 
   LCCC *result = LCCC_createZero();
-  if (result == NULL) return NULL;
 
   for (LCCCTerm *term = lc->head; term != NULL; term = term->next) {
     CannedCobordism *composed = NULL;
@@ -66,16 +61,12 @@ static LCCC *compose_lccc_with_identity(const LCCC *lc, int lc_start,
 
     LCCC *single = LCCC_createSingle(
         composed, LCCC_coeffMultiply(coefficient_sign, term->coeff));
-    if (single == NULL) {
-      LCCC_free(result);
-      return NULL;
-    }
+    CannedCobordism_free(composed);
 
     LCCC *sum = LCCC_add(result, single);
     LCCC_free(result);
     LCCC_free(single);
-    if (sum == NULL)
-      return NULL;
+
     result = sum;
   }
 
@@ -86,24 +77,23 @@ Komplex *Komplex_compose_partial_tangles(Komplex *left, int left_start,
                                          int join_count) {
   if (left == NULL || right == NULL || join_count < 0) return NULL;
 
-  int new_length = left->length + right->length - 1;
+  int new_length = kh_int((int64_t)left->length + right->length - 1);
   Komplex *out = Komplex_create(new_length);
-  if (out == NULL) return NULL;
+
   for (int h = 0; h < new_length; h++) {
     int total = 0;
     for (int i = 0; i < left->length; i++) {
       int j = h - i;
       if (j >= 0 && j < right->length)
-        total += left->chain_groups[i]->n * right->chain_groups[j]->n;
+        total = kh_int((int64_t)total + (int64_t)left->chain_groups[i]->n * right->chain_groups[j]->n);
     }
-    SmoothingColumn *column = (SmoothingColumn *)malloc(sizeof(SmoothingColumn));
-    if (column == NULL) return NULL;
+    SmoothingColumn *column = SmoothingColumn_create();
+
     column->n = total;
-    column->numbers = total > 0 ? (int *)malloc((size_t)total * sizeof(int)) : NULL;
+    column->numbers = total > 0 ? (int *)kh_malloc((size_t)total * sizeof(int)) : NULL;
     column->smoothings =
-        total > 0 ? (Cap **)malloc((size_t)total * sizeof(Cap *)) : NULL;
-    if (total > 0 && (column->numbers == NULL || column->smoothings == NULL))
-      return NULL;
+        total > 0 ? (Cap **)kh_malloc((size_t)total * sizeof(Cap *)) : NULL;
+
     int index = 0;
     for (int i = 0; i < left->length; i++) {
       int j = h - i;
@@ -126,7 +116,6 @@ Komplex *Komplex_compose_partial_tangles(Komplex *left, int left_start,
   for (int h = 0; h < new_length - 1; h++) {
     CobMatrix *d =
         CobMatrix_create(out->chain_groups[h], out->chain_groups[h + 1], true);
-    if (d == NULL) return NULL;
 
     int row_offset = 0;
     for (int i_out = 0; i_out < left->length; i_out++) {
