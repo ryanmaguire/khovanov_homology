@@ -1,197 +1,220 @@
 #!/usr/bin/env zsh
+# Run FullScanning once per alphabetical DT code in a text file.
+# Blank lines, whitespace, and # comments are ignored; duplicates are retained.
+# Results: dt,polynomial,exit_code (the polynomial is the integral free part).
+# Failed knots are recorded and do not prevent the remaining knots from running.
 #
-# run_batch.sh — Run a list of alphabetical DT codes through the Khovanov
-# scanner and write a CSV of results: DT_code, polynomial_string
+# Example:
+#   zsh run_batch.sh -f knots.txt -b ./FullScanning.current -o results.csv -j 4
 #
-# Usage:
-#   ./run_batch.sh                       # use the inline DEFAULT_LIST below
-#   ./run_batch.sh -f knots.txt          # read one DT code per line from file
-#   ./run_batch.sh -j 4                  # run 4 parallel workers (GNU xargs)
-#   ./run_batch.sh -o khovanov.csv       # custom output path
-#   ./run_batch.sh -b ./build/FullScanning  # custom binary path
-#
-# Exit codes per row (encoded in 3rd CSV column if -x set):
-#   0  success
-#   1  blocked by scanner
-#   2  invalid DT code / parse failure
-#   3  torsion-regression self-test failure
-#   130 SIGINT/ctrl-c
-#
-# Notes:
-#   * Input lines starting with '#' are skipped.
-#   * Inline DEFAULT_LIST is read only when -f is NOT set. To paste your own
-#     list, either edit DEFAULT_LIST below or use -f somefile.txt.
-#   * Default output: ./khovanov_batch.csv
-#   * Default binary : ./FullScanning
-#   * Optional -j requires GNU xargs (brew install findutils → gxargs);
-#     without -j the script runs serially, which is fine for <= ~20 knots.
-# ---------------------------------------------------------------------------
+# Batch exit status: 0 all succeeded; 1 scanner failures; 2 setup/I/O failures.
+# Interrupts exit with 130 (INT) or 143 (TERM). No Makefile is required.
 
-set -o pipefail
+emulate -R zsh
+setopt PIPE_FAIL
 
 SCRIPT_DIR="${0:A:h}"
-DEFAULT_BIN="${SCRIPT_DIR}/FullScanning"
-DEFAULT_OUT="${SCRIPT_DIR}/khovanov_batch.csv"
-DEFAULT_ERR_DIR="${SCRIPT_DIR}/_batch_stderr"
-
-BIN="${DEFAULT_BIN}"
-OUT="${DEFAULT_OUT}"
-ERR_DIR="${DEFAULT_ERR_DIR}"
+BIN="${SCRIPT_DIR}/FullScanning"
+OUT="${SCRIPT_DIR}/khovanov_batch.csv"
+ERR_DIR="${SCRIPT_DIR}/_batch_stderr"
 INPUT_FILE=""
 JOBS=1
-EXIT_TAG=0
-
-# ---------------------------------------------------------------------------
-# Edit DEFAULT_LIST below, or pass -f knots.txt to override.
-# ---------------------------------------------------------------------------
-DEFAULT_LIST=(
-  # one alphabetical DT code per line, e.g.:
-  bca
-  bfjihgaedc
-)
+FORCE=0
+WORK=""
+STAGING=""
+DISPATCH_PID=""
 
 usage() {
   cat <<EOF
-Usage: $0 [OPTIONS]
+Usage: zsh $0 -f knots.txt [OPTIONS]
 
-Options:
-  -f <file>      Read DT codes from <file> (one per line, '#' comments OK).
-                 Without -f the inline DEFAULT_LIST in this script is used.
-  -o <file>      Write CSV output to <file>.       Default: ${DEFAULT_OUT:t}
-  -b <path>      Path to FullScanning binary.      Default: ./FullScanning
-  -e <dir>       Directory for per-entry stderr.   Default: _batch_stderr/
-  -j <N>         Parallel workers.                 Default: 1 (serial)
-  -x             Append a per-row exit-code column to the CSV.
-  -h             Show this help.
+  -f file   Required: one alphabetical DT code per line; # comments allowed.
+  -b path   Scanner executable. Default: ${BIN}
+  -o file   Output CSV. Default: ${OUT}
+  -e dir    Parent directory for per-run stderr logs. Default: ${ERR_DIR}
+  -j N      Parallel workers. Default: 1.
+  -F        Explicitly replace an existing output CSV.
+  -x        Accepted for compatibility; exit_code is always included.
+  -h        Show help.
 EOF
 }
 
-while getopts ":f:o:b:e:j:xh" opt; do
-  case "${opt}" in
-    f) INPUT_FILE="${OPTARG}" ;;
-    o) OUT="${OPTARG}" ;;
-    b) BIN="${OPTARG}" ;;
-    e) ERR_DIR="${OPTARG}" ;;
-    j) JOBS="${OPTARG}" ;;
-    x) EXIT_TAG=1 ;;
-    h) usage ; exit 0 ;;
-    :) echo "error: -${OPTARG} requires an argument" >&2 ; usage >&2 ; exit 2 ;;
-    \?) echo "error: unknown option -${OPTARG}" >&2 ; usage >&2 ; exit 2 ;;
+die() { print -ru2 -- "error: $*"; exit 2; }
+
+cleanup() {
+  # Each active worker traps TERM and stops its scanner child.
+  if [[ -n "$WORK" && -d "$WORK" ]]; then
+    local pid_file worker_pid
+    for pid_file in "$WORK"/*.pid(N); do
+      worker_pid=$(<"$pid_file")
+      [[ "$worker_pid" == <-> ]] && kill -TERM "$worker_pid" 2>/dev/null
+    done
+  fi
+  if [[ -n "$DISPATCH_PID" ]]; then
+    kill -TERM "$DISPATCH_PID" 2>/dev/null
+    wait "$DISPATCH_PID" 2>/dev/null
+  fi
+  [[ -n "$STAGING" ]] && rm -f -- "$STAGING"
+  [[ -n "$WORK" ]] && rm -rf -- "$WORK"
+  return 0
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+while getopts ':f:o:b:e:j:xFh' opt; do
+  case "$opt" in
+    f) INPUT_FILE="$OPTARG" ;;
+    o) OUT="$OPTARG" ;;
+    b) BIN="$OPTARG" ;;
+    e) ERR_DIR="$OPTARG" ;;
+    j) JOBS="$OPTARG" ;;
+    F) FORCE=1 ;;
+    x) ;;
+    h) usage; exit 0 ;;
+    :) die "-$OPTARG requires a value" ;;
+    \?) die "unknown option -$OPTARG; use -h" ;;
   esac
 done
+shift $((OPTIND - 1))
+(( $# == 0 )) || die "unexpected arguments; supply input with -f"
+[[ -n "$INPUT_FILE" ]] || die "an input file is required: -f knots.txt"
+[[ -f "$INPUT_FILE" && -r "$INPUT_FILE" ]] || die "cannot read input file: $INPUT_FILE"
+[[ -f "$BIN" && -x "$BIN" ]] || die "scanner is not executable: $BIN"
+[[ "$JOBS" =~ ^[0-9]+$ ]] && (( ${#JOBS} <= 10 && JOBS >= 1 && JOBS <= 2147483647 )) \
+  || die "-j must be a positive integer no greater than 2147483647"
 
-if [[ ! -x "${BIN}" ]]; then
-  echo "error: binary not found or not executable: ${BIN}" >&2
-  echo "       run \`clang -std=c11 -O2 ...\` to build FullScanning first." >&2
-  exit 2
+INPUT_FILE="${INPUT_FILE:A}"
+BIN="${BIN:A}"
+OUT="${OUT:A}"
+ERR_DIR="${ERR_DIR:A}"
+[[ "$OUT" != "$INPUT_FILE" && "$OUT" != "$BIN" ]] \
+  || die "output must not replace the input file or scanner executable"
+[[ ! -d "$OUT" ]] || die "output is a directory: $OUT"
+if (( ! FORCE )) && [[ -e "$OUT" || -L "$OUT" ]]; then
+  die "output already exists: $OUT (choose a new filename or use -F)"
 fi
 
-# Sanity: integer jobs >=1
-if ! [[ "${JOBS}" =~ ^[0-9]+$ ]] || (( JOBS < 1 )); then
-  echo "error: -j N must be a positive integer, got '${JOBS}'" >&2
-  exit 2
-fi
+# Validate and normalize all input before creating or replacing output.
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/kh-batch.XXXXXX") || die "cannot create temporary directory"
+TASKS="$WORK/tasks.txt"
+: > "$TASKS" || die "cannot create task list"
+typeset -i LINE_NUMBER=0 TOTAL=0
+while IFS= read -r line || [[ -n "$line" ]]; do
+  (( ++LINE_NUMBER ))
+  line="${line%%\#*}"
+  dt="${line//[[:space:]]/}"
+  [[ -n "$dt" ]] || continue
+  [[ "$dt" =~ ^[A-Za-z]+$ ]] || die "line $LINE_NUMBER is not an alphabetical DT code"
+  (( ++TOTAL ))
+  printf '%d %s\n' "$TOTAL" "$dt" >> "$TASKS" || die "cannot write task list"
+done < "$INPUT_FILE"
+(( TOTAL > 0 )) || die "input contains no DT codes"
 
-mkdir -p "${ERR_DIR}"
-: > "${OUT}"
+mkdir -p -- "${OUT:h}" "$ERR_DIR" || die "cannot create output/log directories"
+RUN_ERR=$(mktemp -d "$ERR_DIR/run.XXXXXX") || die "cannot create stderr directory"
+STAGING=$(mktemp "${OUT:h}/.${OUT:t}.XXXXXX") || die "cannot create output file"
+printf 'dt,polynomial,exit_code\n' > "$STAGING" || die "cannot write CSV header"
 
-# CSV header
-if (( EXIT_TAG )); then
-  printf 'dt,polynomial,exit_code\n' > "${OUT}"
-else
-  printf 'dt,polynomial\n' > "${OUT}"
-fi
-
-# ---------------------------------------------------------------------------
-# Resolve the list of codes into a temp file (one code per line, stripped).
-# ---------------------------------------------------------------------------
-RAW_LIST="$(mktemp)"
-trap 'rm -f "${RAW_LIST}"' EXIT
-
-if [[ -n "${INPUT_FILE}" ]]; then
-  if [[ ! -r "${INPUT_FILE}" ]]; then
-    echo "error: cannot read input file '${INPUT_FILE}'" >&2
-    exit 2
-  fi
-  # strip comments and blank lines
-  sed -E 's/#.*$//g; /^[[:space:]]*$/d' "${INPUT_FILE}" > "${RAW_LIST}"
-else
-  printf '%s\n' "${DEFAULT_LIST[@]}" \
-    | sed -E 's/#.*$//g; /^[[:space:]]*$/d' > "${RAW_LIST}"
-fi
-
-TOTAL=$(wc -l < "${RAW_LIST}" | tr -d ' ')
-echo "[batch] codes: ${TOTAL}    binary: ${BIN}    output: ${OUT}    jobs: ${JOBS}" >&2
-
-# ---------------------------------------------------------------------------
-# Per-code worker. Lives in a helper script so both the serial while-loop
-# (in-process) and the xargs parallel workers (separate zsh processes) can
-# find it without needing `export -f`, which is flaky across zsh versions.
-# ---------------------------------------------------------------------------
-WORKER="${SCRIPT_DIR}/.run_batch_worker.zsh"
-cat > "${WORKER}" <<'WORKER_EOF'
+# Workers use separate files. Only the parent writes the final CSV.
+WORKER="$WORK/worker.zsh"
+cat > "$WORKER" <<'WORKER_EOF'
 #!/usr/bin/env zsh
-# Arguments: dt_code
-# Env:       BIN OUT ERR_DIR EXIT_TAG
-set -o pipefail
-local dt="$1"
-local safe="${dt//\//_}"
-local err="${ERR_DIR}/${safe}.err"
-local poly
-local -i rc
-
-poly="$("${BIN}" --dt "${dt}" 2> "${err}")"
+emulate -R zsh
+bin="$1"; work="$2"; errors="$3"; id="$4"; dt="$5"
+scanner_pid=""
+cleanup_worker() {
+  if [[ -n "$scanner_pid" ]]; then
+    kill -TERM "$scanner_pid" 2>/dev/null
+    wait "$scanner_pid" 2>/dev/null
+  fi
+  rm -f -- "$work/$id.pid"
+}
+trap cleanup_worker EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+print -r -- "$$" > "$work/$id.pid" || exit 2
+printf -v log_name '%06d_%s.err' "$id" "$dt"
+err="$errors/$log_name"
+"$bin" --coeff Z --format polynomial --dt "$dt" \
+  > "$work/$id.stdout" 2> "$err" &
+scanner_pid=$!
+wait "$scanner_pid"
 rc=$?
-
-if [[ "${poly}" == *,* ]] || [[ "${poly}" == *\"* ]] || [[ "${poly}" == *$'\n'* ]]; then
+scanner_pid=""
+poly=""
+if (( rc == 0 )); then
+  poly=$(<"$work/$id.stdout")
+  if [[ -z "$poly" || "$poly" == *$'\n'* || "$poly" == *$'\r'* ]]; then
+    print -r -- 'Batch error: scanner returned no single-line polynomial.' >> "$err" || exit 2
+    poly=""
+    rc=125
+  fi
+fi
+# Failed computations deliberately have an empty polynomial field.
+if [[ "$poly" == *,* || "$poly" == *\"* ]]; then
   poly="\"${poly//\"/\"\"}\""
 fi
-
-if (( EXIT_TAG )); then
-  printf '%s,%s,%d\n' "${dt}" "${poly}" "${rc}" >> "${OUT}"
-else
-  printf '%s,%s\n' "${dt}" "${poly}" >> "${OUT}"
-fi
-
-if (( rc != 0 )); then
-  echo "  [rc=${rc}] ${dt}   stderr -> ${err}" >&2
-fi
+printf '%s,%s,%d\n' "$dt" "$poly" "$rc" > "$work/$id.csv" || exit 2
+printf '%d\n' "$rc" > "$work/$id.rc" || exit 2
 exit 0
 WORKER_EOF
-chmod +x "${WORKER}"
-trap 'rm -f "${RAW_LIST}" "${WORKER}"' EXIT
+(( $? == 0 )) || die "cannot write worker script"
 
-# Serial dispatch inherits these via process environment; parallel dispatch
-# passes them explicitly via `env` on the xargs command line.
-export BIN OUT ERR_DIR EXIT_TAG
-
-run_one() {
-  "${WORKER}" "$1"
-}
-
-# ---------------------------------------------------------------------------
-# Dispatch. GNU xargs for parallel (-P) if available; otherwise serial.
-# ---------------------------------------------------------------------------
+print -ru2 -- "[batch] codes: $TOTAL; jobs: $JOBS; binary: $BIN"
+print -ru2 -- "[batch] stderr logs: $RUN_ERR"
+typeset -i DISPATCH_RC=0
 if (( JOBS > 1 )); then
-  XARGS=""
-  if command -v gxargs >/dev/null 2>&1 ; then XARGS=gxargs
-  elif xargs --version 2>/dev/null | grep -q "GNU" ; then XARGS=xargs
-  fi
-  if [[ -z "${XARGS}" ]]; then
-    echo "warning: -j ${JOBS} requires GNU xargs (try: brew install findutils)" >&2
-    echo "         falling back to serial execution." >&2
-    JOBS=1
-  fi
-fi
-
-if (( JOBS > 1 )); then
-  "${XARGS}" -P "${JOBS}" -I {} env \
-    BIN="${BIN}" OUT="${OUT}" ERR_DIR="${ERR_DIR}" EXIT_TAG="${EXIT_TAG}" \
-    zsh "${WORKER}" {} < "${RAW_LIST}"
+  # Both macOS xargs and GNU xargs support -P and -n.
+  command -v xargs >/dev/null || die "parallel execution requires xargs"
+  xargs -P "$JOBS" -n 2 zsh "$WORKER" "$BIN" "$WORK" "$RUN_ERR" < "$TASKS" &
+  DISPATCH_PID=$!
+  wait "$DISPATCH_PID"
+  DISPATCH_RC=$?
+  DISPATCH_PID=""
 else
-  while IFS= read -r dt; do
-    run_one "${dt}"
-  done < "${RAW_LIST}"
+  while read -r i dt; do
+    zsh "$WORKER" "$BIN" "$WORK" "$RUN_ERR" "$i" "$dt" &
+    DISPATCH_PID=$!
+    wait "$DISPATCH_PID" || DISPATCH_RC=1
+    DISPATCH_PID=""
+  done < "$TASKS"
 fi
 
-echo "[batch] done. see '${OUT}' (${TOTAL} rows)." >&2
+typeset -i SUCCEEDED=0 FAILED=0 INFRA_FAILURE=0
+(( DISPATCH_RC != 0 )) && INFRA_FAILURE=1
+while read -r i dt; do
+  rc=""
+  [[ -r "$WORK/$i.rc" ]] && rc=$(<"$WORK/$i.rc")
+  if [[ "$rc" != <-> || ! -r "$WORK/$i.csv" ]]; then
+    printf '%s,,125\n' "$dt" >> "$STAGING" || die "cannot write CSV"
+    print -ru2 -- "[batch] missing worker result: entry $i ($dt)"
+    INFRA_FAILURE=1
+    (( ++FAILED ))
+    continue
+  fi
+  cat "$WORK/$i.csv" >> "$STAGING" || die "cannot write CSV"
+  if (( rc == 0 )); then
+    (( ++SUCCEEDED ))
+  else
+    (( ++FAILED ))
+    (( rc == 125 )) && INFRA_FAILURE=1
+    print -ru2 -- "[batch] failed: entry $i ($dt), exit $rc"
+  fi
+done < "$TASKS"
+
+# Staging is on the same filesystem as OUT. A hard link provides atomic
+# no-overwrite publication, including when two batches choose the same output.
+if (( FORCE )); then
+  mv -f -- "$STAGING" "$OUT" || die "cannot publish CSV: $OUT"
+else
+  ln -- "$STAGING" "$OUT" || die "cannot publish CSV; output may now exist: $OUT"
+  rm -f -- "$STAGING" || die "cannot remove staging file"
+fi
+STAGING=""
+print -ru2 -- "[batch] finished: $SUCCEEDED succeeded, $FAILED failed; CSV: $OUT"
+(( INFRA_FAILURE )) && exit 2
+(( FAILED )) && exit 1
+exit 0
