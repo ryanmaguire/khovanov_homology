@@ -134,8 +134,8 @@ Komplex *Komplex_compose_partial_tangles(Komplex *left, int left_start,
            * across every nonzero entry of dl.
            */
           for (int b = 0; b < right_col->n; b++) {
-            CannedCobordism *identity =
-                CannedCobordismImpl_isomorphism(right_col->smoothings[b]);
+            CannedCobordism *identity = CannedCobordismImpl_intern(
+                CannedCobordismImpl_isomorphism(right_col->smoothings[b]));
             if (identity == NULL) return NULL;
 
             for (int r = 0; r < dl->target->n; r++) {
@@ -167,8 +167,8 @@ Komplex *Komplex_compose_partial_tangles(Komplex *left, int left_start,
            * all nonzero entries of dr.
            */
           for (int a = 0; a < left_col->n; a++) {
-            CannedCobordism *identity =
-                CannedCobordismImpl_isomorphism(left_col->smoothings[a]);
+            CannedCobordism *identity = CannedCobordismImpl_intern(
+                CannedCobordismImpl_isomorphism(left_col->smoothings[a]));
             if (identity == NULL) return NULL;
 
             for (int r = 0; r < dr->target->n; r++) {

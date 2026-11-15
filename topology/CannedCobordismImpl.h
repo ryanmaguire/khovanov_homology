@@ -76,6 +76,12 @@ typedef struct CannedCobordismImplData {
   bool reverse_maps_done;
 
   int hashcode;
+
+  /* Set while this cobordism is the shared representative in the intern
+   * table. An interned cobordism must not be modified. */
+  bool interned;
+  uint32_t intern_hash;
+  CannedCobordism *intern_next;
 } CannedCobordismImplData;
 
 /* ================================================================
@@ -131,6 +137,15 @@ CannedCobordismImplData *CannedCobordismImpl_create(Cap *top, Cap *bottom);
  *      interior cycle connects its top and bottom cycle boundaries.
  */
 CannedCobordism *CannedCobordismImpl_isomorphism(Cap *c);
+
+/*
+ * Return the shared representative of cc. Takes over the caller's reference
+ * to cc and returns one reference to the representative, which is cc itself
+ * when no equal cobordism is already shared. cc must be fully built and must
+ * not be modified afterwards. Two interned cobordisms are equal exactly when
+ * their pointers are equal.
+ */
+CannedCobordism *CannedCobordismImpl_intern(CannedCobordism *cc);
 
 /*
  *  CannedCobordismImpl_reverseMaps

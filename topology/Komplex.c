@@ -21,31 +21,6 @@
 #include <stdio.h>
 #include <string.h>
 
-static void CobMatrix_free_with_known_row_count(CobMatrix *m, int row_count) {
-  if (m == NULL)
-    return;
-
-  if (m->entries != NULL) {
-    for (int i = 0; i < row_count; i++) {
-      MatrixEntry *cur = m->entries[i].head;
-      while (cur != NULL) {
-        MatrixEntry *next = cur->next;
-
-        LCCC_free(cur->value);
-        free(cur);
-
-        cur = next;
-      }
-    }
-
-    free(m->entries);
-  }
-
-  SmoothingColumn_free(m->source);
-  SmoothingColumn_free(m->target);
-  free(m);
-}
-
 /* ================================================================
  *  Construction / Destruction
  * ================================================================ */
@@ -321,129 +296,162 @@ int Komplex_greedyReduce(Komplex *k) {
 
   return reductions;
 }
-void Komplex_deloop(Komplex *k) {
-  bool reduced;
-  do {
-    reduced = false;
-
-    for (int h = 0; h < k->length; h++) {
-      SmoothingColumn *col = k->chain_groups[h];
-      if (col == NULL)
-        continue;
-
-      int split_idx = -1;
-      for (int i = 0; i < col->n; i++) {
-        if (col->smoothings[i] != NULL && col->smoothings[i]->ncycles > 0) {
-          split_idx = i;
-          break;
-        }
+/*
+ * A generator whose cap has c circles splits into 2^c generators. Circles
+ * are removed last-first; variant j has bit (c-1-s) set when step s took the
+ * q-1 summand, so its grading is base + c - 2*popcount(j).
+ *
+ * expand_entry replaces one matrix entry by its 2^c delooped entries.
+ * caps[s] is the generator's cap with s circles removed. incoming selects
+ * the differential into the column (cups on the bottom) or out of it (caps
+ * on the top). The input value is borrowed; outputs are owned by the caller.
+ */
+static LCCC **expand_entry(LCCC *value, Cap **caps, int cycles, bool incoming) {
+  size_t count = (size_t)1 << cycles;
+  LCCC **cur = (LCCC **)kh_malloc(count * sizeof(LCCC *));
+  LCCC **next = (LCCC **)kh_malloc(count * sizeof(LCCC *));
+  size_t have = 1;
+  cur[0] = value;
+  for (int s = 1; s <= cycles; s++) {
+    for (size_t v = 0; v < have; v++) {
+      if (incoming) {
+        next[2 * v] = LCCC_cupOnBottom(cur[v], caps[s], true);
+        next[2 * v + 1] = LCCC_cupOnBottom(cur[v], caps[s], false);
+      } else {
+        next[2 * v] = LCCC_capOffTop(cur[v], caps[s], false);
+        next[2 * v + 1] = LCCC_capOffTop(cur[v], caps[s], true);
       }
-      if (split_idx == -1)
-        continue;
-
-      int old_n = col->n;
-      int new_n = kh_int((int64_t)old_n + 1);
-      int *new_numbers = (int *)kh_malloc((size_t)new_n * sizeof(int));
-      Cap **new_smoothings = (Cap **)kh_malloc((size_t)new_n * sizeof(Cap *));
-
-      memcpy(new_numbers, col->numbers, (size_t)old_n * sizeof(int));
-      memcpy(new_smoothings, col->smoothings, (size_t)old_n * sizeof(Cap *));
-      free(col->numbers);
-      free(col->smoothings);
-
-      col->n = new_n;
-      col->numbers = new_numbers;
-      col->smoothings = new_smoothings;
-
-      Cap *base_cap = col->smoothings[split_idx];
-      if (base_cap == NULL)
-        kh_fatal("missing cap in delooping");
-      Cap *v_plus_cap = Cap_removeCycle(base_cap);
-      Cap *v_minus_cap = Cap_removeCycle(base_cap);
-      if (v_plus_cap == NULL || v_minus_cap == NULL)
-        kh_fatal("failed to remove circle in delooping");
-
-      col->smoothings[split_idx] = v_plus_cap;
-      col->smoothings[old_n] = v_minus_cap;
-
-      Cap_free(base_cap);
-      int base_shift = col->numbers[split_idx];
-      col->numbers[split_idx] = kh_int((int64_t)base_shift + 1);
-      col->numbers[old_n] = kh_int((int64_t)base_shift - 1);
-
-      if (h > 0 && k->differentials[h - 1] != NULL) {
-        CobMatrix *old_d_in = k->differentials[h - 1];
-        CobMatrix *new_d_in = CobMatrix_create(old_d_in->source, col, true);
-
-        for (int r = 0; r < old_n; r++) {
-          MatrixEntry *cur = old_d_in->entries[r].head;
-
-          while (cur != NULL) {
-            int c = cur->column_index;
-
-            if (r == split_idx) {
-              LCCC *lccc_plus =
-                  LCCC_cupOnBottom(cur->value, v_plus_cap, true);
-              LCCC *lccc_minus =
-                  LCCC_cupOnBottom(cur->value, v_minus_cap, false);
-
-              CobMatrix_addEntry(new_d_in, split_idx, c, lccc_plus);
-              CobMatrix_addEntry(new_d_in, old_n, c, lccc_minus);
-            } else {
-              CobMatrix_addEntry(new_d_in, r, c, LCCC_clone(cur->value));
-            }
-
-            cur = cur->next;
-          }
-        }
-
-        CobMatrix_reduce(new_d_in);
-
-        k->differentials[h - 1] = new_d_in;
-
-        CobMatrix_free_with_known_row_count(old_d_in, old_n);
-      }
-
-      if (h < k->length - 1 && k->differentials[h] != NULL) {
-        CobMatrix *old_d_out = k->differentials[h];
-        CobMatrix *new_d_out = CobMatrix_create(col, old_d_out->target, true);
-
-        for (int r = 0; r < old_d_out->target->n; r++) {
-          MatrixEntry *cur = old_d_out->entries[r].head;
-
-          while (cur != NULL) {
-            int c = cur->column_index;
-
-            if (c == split_idx) {
-              LCCC *lccc_plus =
-                  LCCC_capOffTop(cur->value, v_plus_cap, false);
-              LCCC *lccc_minus =
-                  LCCC_capOffTop(cur->value, v_minus_cap, true);
-
-              CobMatrix_addEntry(new_d_out, r, split_idx, lccc_plus);
-              CobMatrix_addEntry(new_d_out, r, old_n, lccc_minus);
-            } else {
-              CobMatrix_addEntry(new_d_out, r, c, LCCC_clone(cur->value));
-            }
-
-            cur = cur->next;
-          }
-        }
-
-        CobMatrix_reduce(new_d_out);
-
-        k->differentials[h] = new_d_out;
-        CobMatrix_free(old_d_out);
-      }
-      /*
-       * Only the incoming and outgoing differentials were changed by this
-       * delooping step, and both were reduced immediately after rebuilding.
-       * Reducing every unrelated differential here was redundant.
-       */
-      reduced = true;
-      break;
+      if (s > 1) LCCC_free(cur[v]);
     }
-  } while (reduced);
+    LCCC **tmp = cur;
+    cur = next;
+    next = tmp;
+    have *= 2;
+  }
+  free(next);
+  return cur;
+}
+
+/* Entries of generators without circles are moved, not copied, so callers
+ * must have reduced the differentials beforehand. Expanded entries come out
+ * reduced. */
+void Komplex_deloop(Komplex *k) {
+  for (int h = 0; h < k->length; h++) {
+    SmoothingColumn *col = k->chain_groups[h];
+    if (col == NULL || col->n == 0)
+      continue;
+
+    int old_n = col->n;
+    bool any = false;
+    int64_t total = 0;
+    int max_cycles = 0;
+    for (int i = 0; i < old_n; i++) {
+      if (col->smoothings[i] == NULL)
+        kh_fatal("missing cap in delooping");
+      int c = col->smoothings[i]->ncycles;
+      if (c > 30) kh_fatal("too many circles to deloop");
+      if (c > 0) any = true;
+      if (c > max_cycles) max_cycles = c;
+      total += (int64_t)1 << c;
+    }
+    if (!any)
+      continue;
+
+    int new_n = kh_int(total);
+    int *start = (int *)kh_malloc((size_t)old_n * sizeof(int));
+    /* caps[i][s]: cap of generator i with s circles removed (borrowed at s=0). */
+    Cap ***caps = (Cap ***)kh_calloc((size_t)old_n, sizeof(Cap **));
+
+    SmoothingColumn *new_col = SmoothingColumn_create();
+    new_col->n = new_n;
+    new_col->numbers = (int *)kh_malloc((size_t)new_n * sizeof(int));
+    new_col->smoothings = (Cap **)kh_malloc((size_t)new_n * sizeof(Cap *));
+
+    int at = 0;
+    for (int i = 0; i < old_n; i++) {
+      Cap *base = col->smoothings[i];
+      int c = base->ncycles;
+      start[i] = at;
+      if (c == 0) {
+        new_col->numbers[at] = col->numbers[i];
+        new_col->smoothings[at] = Cap_retain(base);
+        at++;
+        continue;
+      }
+      caps[i] = (Cap **)kh_malloc((size_t)(c + 1) * sizeof(Cap *));
+      caps[i][0] = base;
+      for (int s = 1; s <= c; s++) {
+        caps[i][s] = Cap_removeCycle(caps[i][s - 1]);
+        if (caps[i][s] == NULL)
+          kh_fatal("failed to remove circle in delooping");
+      }
+      int variants = 1 << c;
+      for (int j = 0; j < variants; j++) {
+        int minus = 0;
+        for (int b = j; b; b >>= 1) minus += b & 1;
+        new_col->numbers[at] = kh_int((int64_t)col->numbers[i] + c - 2 * minus);
+        new_col->smoothings[at] = Cap_retain(caps[i][c]);
+        at++;
+      }
+    }
+
+    if (h > 0 && k->differentials[h - 1] != NULL) {
+      CobMatrix *old_in = k->differentials[h - 1];
+      CobMatrix *new_in = CobMatrix_create(old_in->source, new_col, true);
+      for (int r = 0; r < old_n; r++) {
+        int c = col->smoothings[r]->ncycles;
+        for (MatrixEntry *e = old_in->entries[r].head; e != NULL; e = e->next) {
+          if (c == 0) {
+            CobMatrix_putEntry(new_in, start[r], e->column_index, e->value);
+            e->value = NULL;
+            continue;
+          }
+          LCCC **out = expand_entry(e->value, caps[r], c, true);
+          int variants = 1 << c;
+          for (int j = 0; j < variants; j++)
+            CobMatrix_putEntry(new_in, start[r] + j, e->column_index, out[j]);
+          free(out);
+        }
+      }
+      k->differentials[h - 1] = new_in;
+      CobMatrix_free(old_in);
+    }
+
+    if (h < k->length - 1 && k->differentials[h] != NULL) {
+      CobMatrix *old_out = k->differentials[h];
+      CobMatrix *new_out = CobMatrix_create(new_col, old_out->target, true);
+      for (int r = 0; r < old_out->target->n; r++) {
+        for (MatrixEntry *e = old_out->entries[r].head; e != NULL; e = e->next) {
+          int src = e->column_index;
+          int c = col->smoothings[src]->ncycles;
+          if (c == 0) {
+            CobMatrix_putEntry(new_out, r, start[src], e->value);
+            e->value = NULL;
+            continue;
+          }
+          LCCC **out = expand_entry(e->value, caps[src], c, false);
+          int variants = 1 << c;
+          for (int j = 0; j < variants; j++)
+            CobMatrix_putEntry(new_out, r, start[src] + j, out[j]);
+          free(out);
+        }
+      }
+      k->differentials[h] = new_out;
+      CobMatrix_free(old_out);
+    }
+
+    for (int i = 0; i < old_n; i++) {
+      if (caps[i] == NULL) continue;
+      for (int s = 1; s <= col->smoothings[i]->ncycles; s++)
+        Cap_free(caps[i][s]);
+      free(caps[i]);
+    }
+    free(caps);
+    free(start);
+
+    k->chain_groups[h] = new_col;
+    SmoothingColumn_free(col);
+  }
 }
 /* ================================================================
  *  Chain Complex Verification: d² = 0

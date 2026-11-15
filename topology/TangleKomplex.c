@@ -57,7 +57,8 @@ static CobMatrix *CobMatrix_tensorProductMap1(CobMatrix *d_left, SmoothingColumn
         LCCCTerm *term = entry->value->head;
         while (term != NULL) {
           CannedCobordism *f = term->cobordism;
-          CannedCobordism *id = CannedCobordismImpl_isomorphism(col_right->smoothings[j]);
+          CannedCobordism *id = CannedCobordismImpl_intern(
+              CannedCobordismImpl_isomorphism(col_right->smoothings[j]));
           
           CannedCobordism *ftid = f->compose_partial(f, n_strands, id, 0, n_strands);
           
@@ -104,7 +105,8 @@ static CobMatrix *CobMatrix_tensorProductMap2(SmoothingColumn *col_left, CobMatr
         LCCCTerm *term = entry->value->head;
         while (term != NULL) {
           CannedCobordism *g = term->cobordism;
-          CannedCobordism *id = CannedCobordismImpl_isomorphism(col_left->smoothings[j]);
+          CannedCobordism *id = CannedCobordismImpl_intern(
+              CannedCobordismImpl_isomorphism(col_left->smoothings[j]));
           
           CannedCobordism *idtg = id->compose_partial(id, n_strands, g, 0, n_strands);
           
@@ -305,7 +307,8 @@ Komplex *Komplex_singleCrossing(int n_strands, int crossing_index, bool positive
   impl->dots = (int *)kh_calloc((size_t)impl->ncc, sizeof(int));
   impl->genus = (int *)kh_calloc((size_t)impl->ncc, sizeof(int));
   
-  CannedCobordism *saddle = CannedCobordismImpl_as_CannedCobordism(impl);
+  CannedCobordism *saddle =
+      CannedCobordismImpl_intern(CannedCobordismImpl_as_CannedCobordism(impl));
   
   CobMatrix *d = CobMatrix_create(c0, c1, true);
   CobMatrix_putEntry(d, 0, 0, LCCC_createSingle(saddle, 1));

@@ -11,6 +11,8 @@
 
 static void reduce_complex(Komplex *k) {
   if (k == NULL) return;
+  for (int i = 0; i < k->length - 1; i++)
+    if (k->differentials[i] != NULL) CobMatrix_reduce(k->differentials[i]);
   Komplex_deloop(k);
   for (int i = 0; i < k->length - 1; i++)
     if (k->differentials[i] != NULL) CobMatrix_reduce(k->differentials[i]);
@@ -233,7 +235,8 @@ static Komplex *make_local_crossing(int sign) {
   impl->dots = (int *)kh_calloc((size_t)impl->ncc, sizeof(int));
   impl->genus = (int *)kh_calloc((size_t)impl->ncc, sizeof(int));
 
-  CannedCobordism *saddle = CannedCobordismImpl_as_CannedCobordism(impl);
+  CannedCobordism *saddle =
+      CannedCobordismImpl_intern(CannedCobordismImpl_as_CannedCobordism(impl));
   CobMatrix *d = CobMatrix_create(c0, c1, true);
 
   CobMatrix_putEntry(d, 0, 0, LCCC_createSingle(saddle, 1));
@@ -767,7 +770,11 @@ Komplex *PDScanner_build(const PDDiagram *diagram, bool reorder_crossings,
                          bool verify_d_squared, char *reason,
                          size_t reason_size) {
   if (diagram == NULL) return NULL;
-  if (diagram->crossing_count == 0) return make_unknot_complex();
+  if (diagram->crossing_count == 0) {
+    Komplex *unknot = make_unknot_complex();
+    reduce_complex(unknot);
+    return unknot;
+  }
 
   bool *seen = (bool *)kh_calloc((size_t)diagram->edge_count, sizeof(bool));
   bool *done = (bool *)kh_calloc((size_t)diagram->crossing_count, sizeof(bool));

@@ -158,8 +158,8 @@ static LCCC *close_lccc(const LCCC *lc, const Cap *closure_cap, int boundary_siz
       LCCC_free(result);
       return NULL;
     }
-    CannedCobordism *closure_iso =
-      CannedCobordismImpl_isomorphism((Cap *)closure_cap);
+    CannedCobordism *closure_iso = CannedCobordismImpl_intern(
+      CannedCobordismImpl_isomorphism((Cap *)closure_cap));
     if (closure_iso == NULL) {
       snprintf(reason, reason_size,
         "Failed to build the closure isomorphism cobordism.");
@@ -625,6 +625,7 @@ static Komplex *build_scan_komplex(int strands, const int *generators, int count
     if (!next) kh_fatal("could not compose braid crossing");
     Komplex_free(current); Komplex_free(cross);
     current = next;
+    reduce_all_differentials(current);
     Komplex_deloop(current);
     reduce_all_differentials(current);
     Komplex_greedyReduce(current);
@@ -752,6 +753,7 @@ int main(int argc, char **argv) {
     open = build_scan_komplex(strands, generators, count, verify);
     closed = close_braid_komplex(open, reason, sizeof(reason));
     if (!closed) kh_fatal(reason[0] ? reason : "braid closure failed");
+    reduce_all_differentials(closed);
     Komplex_deloop(closed);
     reduce_all_differentials(closed);
     Komplex_greedyReduce(closed);

@@ -15,20 +15,180 @@ CannedCobordism *CannedCobordism_retain(CannedCobordism *cc) {
   return cc;
 }
 
-static CannedCobordism *impl_compose(const CannedCobordism *self,
-                                     const CannedCobordism *other) {
+/* ================================================================
+ *  Shared cobordisms
+ *
+ *  The intern table holds one representative per distinct cobordism and
+ *  does not own it: a representative leaves the table when its last
+ *  reference is released. The composition cache remembers recent
+ *  compositions of shared cobordisms and owns references to its operands
+ *  and results; an occupied slot is overwritten on collision.
+ * ================================================================ */
+static CannedCobordism **intern_buckets = NULL;
+static size_t intern_bucket_count = 0;
+static size_t intern_size = 0;
+
+static uint32_t mix32(uint32_t h, uint32_t v) {
+  h ^= v + UINT32_C(0x9e3779b9) + (h << 6) + (h >> 2);
+  return h;
+}
+
+/* Invariant under renumbering of connected components, as
+ * CannedCobordismImpl_equals is. */
+static uint32_t intern_hash_of(const CannedCobordismImplData *d) {
+  uint32_t h = (uint32_t)d->n;
+  h = mix32(h, (uint32_t)d->hpower);
+  h = mix32(h, (uint32_t)Cap_hashCode(d->top));
+  h = mix32(h, (uint32_t)Cap_hashCode(d->bottom));
+
+  int order[d->ncc > 0 ? d->ncc : 1];
+  for (int i = 0; i < d->ncc; i++) order[i] = -1;
+  int seen = 0;
+  for (int bc = 0; bc < d->nbc; bc++) {
+    int label = d->connectedComponent[bc];
+    if (order[label] < 0) {
+      order[label] = seen++;
+      h = mix32(h, (uint32_t)d->dots[label]);
+      h = mix32(h, (uint32_t)d->genus[label]);
+    }
+    h = mix32(h, (uint32_t)order[label]);
+  }
+  uint32_t closed = 0;
+  for (int i = 0; i < d->ncc; i++)
+    if (order[i] < 0)
+      closed += mix32(mix32(UINT32_C(17), (uint32_t)d->dots[i]),
+                      (uint32_t)d->genus[i]);
+  return mix32(h, closed);
+}
+
+static void intern_grow(void) {
+  size_t new_count = intern_bucket_count ? intern_bucket_count * 2 : 1024;
+  CannedCobordism **fresh =
+      (CannedCobordism **)kh_calloc(new_count, sizeof(CannedCobordism *));
+  for (size_t i = 0; i < intern_bucket_count; i++) {
+    CannedCobordism *cur = intern_buckets[i];
+    while (cur != NULL) {
+      CannedCobordismImplData *d = (CannedCobordismImplData *)cur->impl_data;
+      CannedCobordism *next = d->intern_next;
+      size_t slot = d->intern_hash & (new_count - 1);
+      d->intern_next = fresh[slot];
+      fresh[slot] = cur;
+      cur = next;
+    }
+  }
+  free(intern_buckets);
+  intern_buckets = fresh;
+  intern_bucket_count = new_count;
+}
+
+static void intern_remove(CannedCobordism *cc) {
+  CannedCobordismImplData *d = (CannedCobordismImplData *)cc->impl_data;
+  CannedCobordism **link =
+      &intern_buckets[d->intern_hash & (intern_bucket_count - 1)];
+  while (*link != cc)
+    link = &((CannedCobordismImplData *)(*link)->impl_data)->intern_next;
+  *link = d->intern_next;
+  d->interned = false;
+  intern_size--;
+}
+
+CannedCobordism *CannedCobordismImpl_intern(CannedCobordism *cc) {
+  if (cc == NULL) return NULL;
+  CannedCobordismImplData *d = (CannedCobordismImplData *)cc->impl_data;
+  if (d->interned) return cc;
+
+  if (intern_size >= intern_bucket_count) intern_grow();
+  uint32_t hash = intern_hash_of(d);
+  size_t slot = hash & (intern_bucket_count - 1);
+  for (CannedCobordism *cur = intern_buckets[slot]; cur != NULL;
+       cur = ((CannedCobordismImplData *)cur->impl_data)->intern_next) {
+    CannedCobordismImplData *od = (CannedCobordismImplData *)cur->impl_data;
+    if (od->intern_hash == hash && CannedCobordismImpl_equals(d, od)) {
+      CannedCobordism_retain(cur);
+      CannedCobordism_free(cc);
+      return cur;
+    }
+  }
+  d->intern_hash = hash;
+  d->interned = true;
+  d->intern_next = intern_buckets[slot];
+  intern_buckets[slot] = cc;
+  intern_size++;
+  return cc;
+}
+
+#define COMPOSE_CACHE_SLOTS 65536
+
+typedef struct ComposeCacheSlot {
+  const CannedCobordism *a;
+  const CannedCobordism *b;
+  int start, cstart, nc; /* nc < 0 marks a vertical composition */
+  CannedCobordism *result;
+} ComposeCacheSlot;
+
+static ComposeCacheSlot *compose_cache = NULL;
+
+static ComposeCacheSlot *compose_cache_slot(const CannedCobordism *a,
+                                            const CannedCobordism *b,
+                                            int start, int cstart, int nc) {
+  if (compose_cache == NULL)
+    compose_cache = (ComposeCacheSlot *)kh_calloc(COMPOSE_CACHE_SLOTS,
+                                                  sizeof(ComposeCacheSlot));
+  uint32_t h =
+      ((const CannedCobordismImplData *)a->impl_data)->intern_hash;
+  h = mix32(h, ((const CannedCobordismImplData *)b->impl_data)->intern_hash);
+  h = mix32(h, (uint32_t)start);
+  h = mix32(h, (uint32_t)cstart);
+  h = mix32(h, (uint32_t)nc);
+  return &compose_cache[h & (COMPOSE_CACHE_SLOTS - 1)];
+}
+
+static CannedCobordism *cached_compose(const CannedCobordism *self, int start,
+                                       const CannedCobordism *other,
+                                       int cstart, int nc) {
   CannedCobordismImplData *sd = (CannedCobordismImplData *)self->impl_data;
   CannedCobordismImplData *od = (CannedCobordismImplData *)other->impl_data;
-  return CannedCobordismImpl_compose_vertical(sd, od);
+  bool shared = sd->interned && od->interned;
+  ComposeCacheSlot *slot = NULL;
+  if (shared) {
+    slot = compose_cache_slot(self, other, start, cstart, nc);
+    if (slot->a == self && slot->b == other && slot->start == start &&
+        slot->cstart == cstart && slot->nc == nc)
+      return CannedCobordism_retain(slot->result);
+  }
+
+  CannedCobordism *result =
+      nc < 0 ? CannedCobordismImpl_compose_vertical(sd, od)
+             : CannedCobordismImpl_compose_horizontal(sd, start, od, cstart, nc);
+
+  if (shared && result != NULL) {
+    /* Take the new references before releasing the old ones: releasing can
+     * free a cobordism that the new entry also uses. */
+    ComposeCacheSlot old = *slot;
+    slot->a = CannedCobordism_retain((CannedCobordism *)self);
+    slot->b = CannedCobordism_retain((CannedCobordism *)other);
+    slot->start = start;
+    slot->cstart = cstart;
+    slot->nc = nc;
+    slot->result = CannedCobordism_retain(result);
+    CannedCobordism_free((CannedCobordism *)old.a);
+    CannedCobordism_free((CannedCobordism *)old.b);
+    CannedCobordism_free(old.result);
+  }
+  return result;
+}
+
+static CannedCobordism *impl_compose(const CannedCobordism *self,
+                                     const CannedCobordism *other) {
+  return cached_compose(self, 0, other, 0, -1);
 }
 
 static CannedCobordism *impl_compose_partial(const CannedCobordism *self,
                                              int start,
                                              const CannedCobordism *cc,
                                              int cstart, int nc) {
-  CannedCobordismImplData *sd = (CannedCobordismImplData *)self->impl_data;
-  CannedCobordismImplData *cd = (CannedCobordismImplData *)cc->impl_data;
-  return CannedCobordismImpl_compose_horizontal(sd, start, cd, cstart, nc);
+  if (nc < 0) return NULL;
+  return cached_compose(self, start, cc, cstart, nc);
 }
 
 static bool impl_isIsomorphism(const CannedCobordism *self) {
@@ -41,6 +201,8 @@ static void impl_reverseMaps(CannedCobordism *self) {
 }
 
 static void impl_free(CannedCobordism *self) {
+  if (((CannedCobordismImplData *)self->impl_data)->interned)
+    intern_remove(self);
   CannedCobordismImpl_free((CannedCobordismImplData *)self->impl_data);
   free(self);
 }
@@ -913,7 +1075,7 @@ CannedCobordismImpl_compose_vertical(CannedCobordismImplData *this_d,
 
   assert(CannedCobordismImpl_check(ret));
 
-  return CannedCobordismImpl_as_CannedCobordism(ret);
+  return CannedCobordismImpl_intern(CannedCobordismImpl_as_CannedCobordism(ret));
 }
 
 CannedCobordism *
@@ -1338,7 +1500,7 @@ CannedCobordismImpl_compose_horizontal(CannedCobordismImplData *this_d,
 
   assert(CannedCobordismImpl_check(ret));
 
-  return CannedCobordismImpl_as_CannedCobordism(ret);
+  return CannedCobordismImpl_intern(CannedCobordismImpl_as_CannedCobordism(ret));
 }
 
 CannedCobordism *CannedCobordismImpl_stripClosed(CannedCobordism *cc) {
@@ -1463,7 +1625,7 @@ CannedCobordismImpl_cycleBoundaryMap(Cap *top, Cap *bottom, bool add_dot) {
     }
   }
 
-  return CannedCobordismImpl_as_CannedCobordism(d);
+  return CannedCobordismImpl_intern(CannedCobordismImpl_as_CannedCobordism(d));
 }
 
 CannedCobordism *CannedCobordismImpl_capOffTop(CannedCobordism *cc, Cap *new_top,

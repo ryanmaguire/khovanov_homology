@@ -186,6 +186,12 @@ static bool cobordism_equal(const CannedCobordism *a,
   if (a == NULL || b == NULL)
     return false;
 
+  /* Shared cobordisms are unique, so distinct pointers mean distinct values. */
+  if (a->impl_data != NULL && b->impl_data != NULL &&
+      ((const CannedCobordismImplData *)a->impl_data)->interned &&
+      ((const CannedCobordismImplData *)b->impl_data)->interned)
+    return false;
+
   //Structural equality: same source, target, and impl_data
   if (!Cap_equals(a->source, b->source))
     return false;
@@ -352,6 +358,23 @@ LCCC *LCCC_multiply(LCCC *a, RingElement *coeff) {
  * Bar-Natan surface relations
  * ================================================================ */
 
+/* True when reduction would return the cobordism unchanged: every boundary
+ * component is its own genus-0 component carrying at most one dot. */
+static bool is_normal_form(const CannedCobordismImplData *impl) {
+  if (impl->ncc != impl->nbc) return false;
+  bool used[impl->ncc > 0 ? impl->ncc : 1];
+  memset(used, 0, sizeof(used));
+  for (int bc = 0; bc < impl->nbc; bc++) {
+    int label = impl->connectedComponent[bc];
+    if (label < 0 || label >= impl->ncc || used[label]) return false;
+    used[label] = true;
+    if (impl->genus[label] != 0 || impl->dots[label] > 1 ||
+        impl->dots[label] < 0)
+      return false;
+  }
+  return true;
+}
+
 LCCC *LCCC_reduce(LCCC *a) {
   LCCC *ret = LCCC_createZero();
   if (a == NULL)
@@ -363,6 +386,11 @@ LCCC *LCCC_reduce(LCCC *a) {
 
     CannedCobordismImplData *impl =
         (CannedCobordismImplData *)cur->cobordism->impl_data;
+
+    if (is_normal_form(impl)) {
+      lccc_add_term(ret, cur->cobordism, cur->coeff);
+      continue;
+    }
 
     if (!impl->reverse_maps_done) {
       CannedCobordismImpl_reverseMaps(impl);
@@ -561,7 +589,8 @@ LCCC *LCCC_reduce(LCCC *a) {
           new_impl->genus[bc] = 0;
         }
 
-        CannedCobordism *new_cc = CannedCobordismImpl_as_CannedCobordism(new_impl);
+        CannedCobordism *new_cc = CannedCobordismImpl_intern(
+            CannedCobordismImpl_as_CannedCobordism(new_impl));
         lccc_add_term(ret, new_cc, coeff_value);
         CannedCobordism_free(new_cc);
       }

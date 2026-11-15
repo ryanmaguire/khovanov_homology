@@ -75,8 +75,9 @@ int Komplex_reduce_with_oracle(Komplex *k, const CollapseSchedule *schedule);
 int Komplex_greedyReduce(Komplex *k);
 /*
  *  Purpose:
- *      Repeatedly split off isolated circle factors from chain groups
- *      into their two shifted summands.
+ *      Split every circle off every generator: a generator with c circles
+ *      becomes 2^c circle-free generators with shifted gradings. Each column
+ *      is rebuilt once. The differentials must already be reduced.
  *
  *  Arguments:
  *      k — the Khovanov chain complex
